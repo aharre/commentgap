@@ -1,0 +1,30 @@
+---
+title: "Scraping Try"
+output: html_document
+date: "2022-10-11"
+---
+
+```{r}
+library(rvest)
+?rvest
+library(xml2)
+library(httr)
+
+
+
+```
+
+## Der Standard Crawler Regeln
+
+6. Crawler
+Der automatisierte Abruf der Website-Inhalte ist nur unter Einhaltung der folgenden Regeln gestattet: 
+Die in der Robots.txt hinterlegten Anweisungen müssen vollständig eingehalten werden. Aus der Kennung des User-Agent des Crawlers (alias Spider, Robot, Bot) muss dessen Betreiber:in und eine Kontaktmöglichkeit eindeutig hervorgehen. Die Zugriffsrate darf einen Request pro Sekunde nicht überschreiten. Die weiter oben angeführten Copyright-Hinweise gelten auch für die Daten, die Crawler sammeln. Crawler dürfen überdies keinen User Generated Content erstellen, insbesondere keine Postings, Bewertungen, oder an Quiz/Umfragen teilnehmen. Anwendungen oder Programme, die den angeführten Regeln nicht entsprechen, wird die STANDARD Medien AG durch alle zulässigen und geeigneten Maßnahmen am Zugriff auf unsere Webinhalte hindern.
+
+## People trying to scrape derstandard.at
+
+https://stackoverflow.com/questions/70137152/r-extract-links-web-scraping-site-that-asks-for-consent-accept-cookies-rsel
+https://solveforum.com/forums/threads/solved-r-extract-links-web-scraping-site-that-asks-for-consent-accept-cookies-rselenium.373977/
+
+https://www.researchgate.net/publication/361741036_Validating_daily_social_media_macroscopes_of_emotions
+
+
