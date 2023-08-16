@@ -1,4 +1,5 @@
 # Capstone Project
+
 ## Measuring the comment gap: A machine learning and quantitative text analysis approach to studying news media user comments
 
 
