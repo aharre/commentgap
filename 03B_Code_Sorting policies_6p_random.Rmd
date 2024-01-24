@@ -1,0 +1,1514 @@
+---
+title: "03_Code_Sorting policies"
+output: html_document
+date: "2023-08-07"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyr)
+library(ggplot2)
+library(dplyr)
+
+head(comment_data_general)
+
+# working directory
+setwd("C:/Users/flora/Documents/03_Karriere/02_Projects/01_Master thesis/01_Publication/OneDrive/Thesis_Social Navigation/Thesis")
+```
+
+
+
+#0. Format scores
+```{r}
+# offset readability score to make all positive
+if(as.numeric(summary(comment_data_1$SMOG_readability)[1]) < 0){
+  comment_data_1$SMOG_readability_pos <- comment_data_1$SMOG_readability - as.numeric(summary(comment_data_1$SMOG_readability)[1])
+} else {
+  comment_data_1$SMOG_readability_pos <- comment_data_1$SMOG_readability
+}
+# replace NAs with zeros
+comment_data_1$SMOG_readability_pos <- ifelse(is.na(comment_data_1$SMOG_readability_pos)==TRUE, 0, comment_data_1$SMOG_readability_pos)
+
+
+###########
+comment_data_1$cosine_1_pos <- ifelse(is.na(comment_data_1$cosine_1) == TRUE, 0, comment_data_1$cosine_1)
+
+###########
+# offset lexdiv score to make all positive
+if(as.numeric(summary(comment_data_1$lexdiv_cttr)[1]) < 0){
+  comment_data_1$lexdiv_pos <- comment_data_1$lexdiv_cttr - as.numeric(summary(comment_data_1$lexdiv_cttr)[1])
+} else {
+  comment_data_1$lexdiv_pos <- comment_data_1$lexdiv_cttr
+}
+
+# replace NAs with zeros
+comment_data_1$lexdiv_pos <- ifelse(is.na(comment_data_1$lexdiv_pos)==TRUE, 0, comment_data_1$lexdiv_pos)
+
+write.csv(comment_data_1, "comment_data_discussion2000140091025.csv")
+
+```
+
+
+
+# Method x = number of comments n, y = cumulative values t
+
+
+## calculate cumulative sum
+```{r}
+library(tidyr)
+library(ggplot2)
+
+#test
+length(df_sort_list)
+sorting_policies_list_flat #68
+
+#' For comments of a given article, calculates cumulative feature scores for 
+#' different sorting policies.
+#' 
+#' @param df_sort_list list of dataframes of comments sorted according to 
+#' different sorting policies for a given discussion.
+#' @param score name of feature score to calculate.
+#' @param sorting_policies list of names of sorting policies.
+#' @returns a dataframe of cumulative sum of feature score where rows = comment 
+#' positions, columns = sorting policies.
+cumsum_score <- function(df_sort_list, score, sorting_policies = sorting_policies_list_flat_rand){
+  
+  # create dataframe for given article
+  df_t <- data.frame(n = 1:nrow(df_sort_list[[8]]))
+    
+  # loop through all 66 sorting policies + best and worst = 68 policies
+  for(j in 1:length(df_sort_list)){
+    
+    # get dataframe with sorting
+    i <- df_sort_list[[j]]
+    
+    # CUMULATIVE SCORE
+    score_position <- which(colnames(i) == score)
+    
+    # get cumulative sum 
+    score_cum_sum <- cumsum(i[[score_position]])
+    
+    # interpolate values if replies hidden policy
+    if(nrow(i) < nrow(df_t)){
+      
+      T_sum <- sum(df_sort_list[[6]][[score_position]])
+      t_Nr_p <- score_cum_sum[[nrow(i)]]
+      N <- nrow(df_t)
+      Nr <- nrow(i)
+      
+      i_to_interpolate <- (Nr+1):N
+      t_i_p <- ((T_sum - t_Nr_p)/(N - Nr))*(i_to_interpolate - Nr) + t_Nr_p
+      
+      #merge back together
+      score_cum_sum <- c(score_cum_sum, t_i_p)
+      
+    }
+    
+    # add to dataframe
+    df_t[,j+1] <- score_cum_sum
+
+  }
+  
+  # add baseline policy
+  T_sum <- sum(df_sort_list[[6]][[score_position]])
+  N <- nrow(df_t)
+  
+  score_avg <- rep(T_sum/N, N)
+  score_avg_cumsum <- cumsum(score_avg)
+  
+  # add to dataframe
+  df_t[,10] <- score_avg_cumsum
+  
+  #rename columns
+  colnames(df_t) <- c("n", sorting_policies, "baseline")
+
+  return(df_t)
+}
+
+# test
+df_cumsum_smog <- cumsum_score(df_sort_list, score = "SMOG_readability_pos", sorting_policies_list_flat)
+
+
+
+```
+
+
+###calculate proportions of distances
+```{r}
+
+#' For a given article discussion, calculates the average ratio of distances 
+#' between given sorting policies and the worst possible, the best possible and the
+#' random baseline sorting. (="Q")
+#' 
+#' @param df_cumsum_smog_a dataframe of cumulative score sums per policy.
+#' @param cut_off cut-off point defining the top X comments to consider.
+#' @returns A numeric vector containing average Q ratios for all sorting policies.
+get_Q <- function(df_cumsum_smog_a, cut_off = nrow(df_cumsum_smog_a)){
+
+  # get distances
+  tr <- df_cumsum_smog_a$baseline
+  tb <- df_cumsum_smog_a$best
+  tw <- df_cumsum_smog_a$worst
+  diff_tb_tr <- tb - tr
+  diff_tr_tw <- tr - tw
+  
+  # vector to collect average ratios
+  avg_ratios <- c()
+  
+  # loop through policies p
+  for(i in 2:7){
+    
+    # get difference to baseline
+    diff_tp_tr <- df_cumsum_smog_a[[i]] - tr
+    
+    # get ratios
+    ratios <- ifelse(diff_tp_tr > 0, diff_tp_tr/diff_tb_tr, diff_tp_tr/diff_tr_tw)
+    
+    if(cut_off < nrow(df_cumsum_smog_a)){
+      
+      # use only ratios for 1 to n
+      ratios <- ratios[1:cut_off]
+      
+    } else {
+      
+      # remove last entry (=NaN)
+      ratios <- ratios[1:(length(ratios)-1)]
+    }
+    
+    # get average ratio
+    avg_ratio <- mean(ratios)
+    avg_ratios <- c(avg_ratios, avg_ratio)
+  }
+  
+  return(avg_ratios)
+  
+}
+
+df <- get_Q(df_cumsum_smog_a, 5)
+
+
+```
+
+
+
+#Graphs
+
+
+##Final graph function
+```{r, fig.height=5, fig.width=6}
+# SMOG readability sortings for a given article
+prop_SMOG <- function(df_sort_list_flat, sorting_policies = sorting_policies_list_flat){
+  
+  # create dataframe for given article
+  #df_article_scores <- data.frame(sorting_policies = sorting_policies_list_flat, mean_score = vector("numeric", 36))
+  
+  i <- df_sort_list_flat[[36]]
+  
+  prop_disc <- rep(1/nrow(i), nrow(i))
+  cum_sum_prop_disc <- cumsum(prop_disc)
+    
+  
+  df_graph <- data.frame(prop_disc = cum_sum_prop_disc)
+  
+  
+    
+  # loop through all 36 sorting policies
+  for(j in 13:length(df_sort_list_flat)){
+    
+    # get dataframe with sorting
+    i <- df_sort_list_flat[[j]]
+    
+    # PERCENTAGE OF SCORE
+    
+    # offset readability score to make all positive
+    if(as.numeric(summary(i$SMOG_readability)[1]) < 0){
+      i$SMOG_readability_pos <- i$SMOG_readability - as.numeric(summary(i$SMOG_readability)[1])
+    } else {
+      i$SMOG_readability_pos <- i$SMOG_readability
+    }
+    
+    # replace NAs with zeros
+    i$SMOG_readability_pos <- ifelse(is.na(i$SMOG_readability_pos)==TRUE, 0, i$SMOG_readability_pos)
+                                     
+    # calculate proportion of readability score read
+    i$SMOG_prop <- i$SMOG_readability_pos/sum(i$SMOG_readability_pos)
+    
+    # get cumulative sum of proportion
+    cum_sum_prop <- cumsum(i$SMOG_prop)
+    
+    # PERCENTAGE OF DISCUSSION
+    
+    prop_disc <- rep(1/nrow(i), nrow(i))
+    cum_sum_prop_disc <- cumsum(prop_disc)
+    
+    # NORMAL GRAPH
+    df_graph <- cbind(df_graph, cum_sum_prop)
+  
+    
+    # DETRENDED GRAPH
+    
+    #df_graph$prop_score_detrend <- df_graph$prop_score - df_graph$prop_disc
+    
+    #df_article_scores[j,2] <- mean(df_graph$prop_score_detrend)
+
+  }
+  
+  colnames(df_graph) <- c("n_prop", sorting_policies_list_flat[13:36])
+
+  return(df_graph)
+}
+
+df_plot_SMOG <- prop_SMOG(df_sort_list)
+
+df_plot_SMOG_long <- df_plot_SMOG %>% pivot_longer(cols = 2:25, names_to = "policy", values_to = "SMOG_readability")
+
+p <- ggplot(df_plot_SMOG_long, aes(x=n_prop, y = SMOG_readability)) +
+    geom_line(aes(colour = policy), size = 0.8, alpha = 0.5) +
+    labs(title = "Sorting of most readable comments by policy") +
+    theme_minimal() +
+    theme(panel.grid = element_blank(),
+          panel.border = element_rect(color = "black", fill = NA, size = 0.1),
+          legend.position = "none"
+          ) +
+    scale_color_manual(values=user_palette) +
+      xlab("proportion of debate read") +
+    ylab("proportion readability score read") +
+    xlim(0,1) + ylim(0,1)
+  
+print(p)
+
+```
+
+# detrended
+```{r}
+# SMOG readability sortings for a given article
+prop_SMOG_det <- function(df_sort_list_flat, sorting_policies = sorting_policies_list_flat){
+  
+  # create dataframe for given article
+  #df_article_scores <- data.frame(sorting_policies = sorting_policies_list_flat, mean_score = vector("numeric", 36))
+  
+  i <- df_sort_list_flat[[36]]
+  
+  prop_disc <- rep(1/nrow(i), nrow(i))
+  cum_sum_prop_disc <- cumsum(prop_disc)
+    
+  
+  df_graph <- data.frame(prop_disc = cum_sum_prop_disc)
+  
+  
+    
+  # loop through all 36 sorting policies
+  for(j in 13:length(df_sort_list_flat)){
+    
+    # get dataframe with sorting
+    i <- df_sort_list_flat[[j]]
+    
+    # PERCENTAGE OF SCORE
+    
+    # offset readability score to make all positive
+    if(as.numeric(summary(i$SMOG_readability)[1]) < 0){
+      i$SMOG_readability_pos <- i$SMOG_readability - as.numeric(summary(i$SMOG_readability)[1])
+    } else {
+      i$SMOG_readability_pos <- i$SMOG_readability
+    }
+    
+    # replace NAs with zeros
+    i$SMOG_readability_pos <- ifelse(is.na(i$SMOG_readability_pos)==TRUE, 0, i$SMOG_readability_pos)
+                                     
+    # calculate proportion of readability score read
+    i$SMOG_prop <- i$SMOG_readability_pos/sum(i$SMOG_readability_pos)
+    
+    # get cumulative sum of proportion
+    cum_sum_prop <- cumsum(i$SMOG_prop)
+    
+    # PERCENTAGE OF DISCUSSION
+    
+    prop_disc <- rep(1/nrow(i), nrow(i))
+    cum_sum_prop_disc <- cumsum(prop_disc)
+    
+    # NORMAL GRAPH
+    df_graph <- cbind(df_graph, cum_sum_prop)
+  
+    
+    # DETRENDED GRAPH
+    
+    df_graph$prop_score_detrend <- df_graph$prop_score - df_graph$prop_disc
+    
+    #df_article_scores[j,2] <- mean(df_graph$prop_score_detrend)
+
+  }
+  
+  colnames(df_graph) <- c("n_prop", sorting_policies_list_flat[13:36])
+
+  return(df_graph)
+}
+
+df_plot_SMOG_det <- prop_SMOG_det(df_sort_list)
+
+df_plot_SMOG_long$SMOG_readability_detrended <- df_plot_SMOG_long$SMOG_readability - df_plot_SMOG_long$n_prop
+
+user_palette <- rep(c("#004949","#ff6db6","#490092", 
+                      "#6db6ff","#db6d00","#24ff24"), each=4)
+
+p <- ggplot(df_plot_SMOG_long, aes(x=n_prop, y = SMOG_readability_detrended)) +
+    geom_line(aes(colour = policy), size = 0.8, alpha = 0.5) +
+    labs(title = "Sorting of most readable comments by policy") +
+    theme_minimal() +
+    theme(panel.grid = element_blank(),
+          panel.border = element_rect(color = "black", fill = NA, size = 0.1),
+          legend.position = "none"
+          ) +
+    scale_color_manual(values=user_palette) +
+    xlab("proportion of debate read") +
+    ylab("detrended proportion of readability score read") 
+    #xlim(0,1) + ylim(0,1)
+  
+print(p)
+```
+
+
+
+##Plot graphs - 1 discussion
+```{r, fig.height=4, fig.width=6}
+
+replies_palette <- rep(c("#E69F00", "#56B4E9", "#ff6db6"), 12)
+pinned_palette <- rep(c("#E69F00", "#56B4E9"), each = 3, 6)
+user_palette <- rep(c("#004949","#ff6db6","#490092", 
+                      "#6db6ff","#db6d00","#24ff24"), each=6)
+
+
+
+
+c("#004949","#009292","#ff6db6","#ffb6db", "#490092","#006ddb",
+                      "#b66dff","#6db6ff","#b6dbff","#920000","#924900","#db6d00","#24ff24","#ffff6d")
+
+for(i in list(replies_palette, pinned_palette, user_palette)){
+  
+  p <- ggplot(df_plot_SMOG, aes(x=n, y = values)) +
+    geom_line(aes(colour = sorting_policy), size = 0.8, alpha = 0.5) +
+    labs(title = "Sorting of most readable comments by sorting policy") +
+    xlab("number of comments read") +
+    ylab("readability score read") +
+    theme_minimal() +
+    theme(panel.grid = element_blank(),
+          panel.border = element_rect(color = "black", fill = NA, size = 0.1)
+          #,legend.position = "none"
+          ) +
+    scale_color_manual(values=i) +
+    xlim(0,20) + ylim(0,200)
+  
+  print(p)
+  
+}
+
+unique(df_plot_SMOG$sorting_policy)
+
+#OLD:
+
+for(i in 1:3){
+  
+  df_plot <- top_10p_cosine1(df_sort_list[[i]], sorting_policies_list[[i]])
+  p <- ggplot(df_plot, aes(x=n, y = values)) +
+    geom_line(aes(colour = sorting_policy), size = 0.8, alpha = 0.5) +
+    labs(title = "Sorting of most relevant comments by sorting policy", subtitle = "Discussion of article 3177 with 4675 comments, Cosine similarity to article") +
+    xlab("n/N proportion of comments read") +
+    ylab("proportion of overall 10% most relevant comments") +
+    theme_minimal() +
+    theme(panel.grid = element_blank(),
+          panel.border = element_rect(color = "black", fill = NA, size = 0.1)) +
+    xlim(0, 1) + ylim(0, 1)
+  
+  print(p)
+}
+
+for(i in 1:3){
+  df_plot <- top_10p_lexdiv(df_sort_list[[i]], sorting_policies_list[[i]])
+  
+  p <- ggplot(df_plot, aes(x=n_rel, y = values)) +
+    geom_line(aes(colour = sorting_policy), size = 0.8, alpha = 0.5) +
+    labs(title = "Sorting of most lexically diverse comments by sorting policy", subtitle = "Discussion of article 3177 with 4675 comments") +
+    xlab("n/N proportion of comments read") +
+    ylab("proportion of overall 10% most diverse comments") +
+    theme_minimal() +
+    theme(panel.grid = element_blank(),
+          panel.border = element_rect(color = "black", fill = NA, size = 0.1)) +
+    xlim(0, 1) + ylim(0, 1)
+  print(p)
+}
+
+```
+
+
+
+#GENERALISED
+
+##0. Format scores
+
+```{r}
+
+format_scores <- function(comment_data_1){
+  
+  # offset readability score to make all positive
+  if(as.numeric(summary(comment_data_1$SMOG_readability)[1]) < 0){
+    comment_data_1$SMOG_readability_pos <- comment_data_1$SMOG_readability - as.numeric(summary(comment_data_1$SMOG_readability)[1])
+  } else {
+    comment_data_1$SMOG_readability_pos <- comment_data_1$SMOG_readability
+  }
+  # replace NAs with zeros
+  comment_data_1$SMOG_readability_pos <- ifelse(is.na(comment_data_1$SMOG_readability_pos)==TRUE, 0, comment_data_1$SMOG_readability_pos)
+  
+  
+  ###########
+  comment_data_1$cosine_1_pos <- ifelse(is.na(comment_data_1$cosine_1) == TRUE, 0, comment_data_1$cosine_1)
+  
+  ###########
+  # offset lexdiv score to make all positive
+  if(as.numeric(summary(comment_data_1$lexdiv_cttr)[1]) < 0){
+    comment_data_1$lexdiv_pos <- comment_data_1$lexdiv_cttr - as.numeric(summary(comment_data_1$lexdiv_cttr)[1])
+  } else {
+    comment_data_1$lexdiv_pos <- comment_data_1$lexdiv_cttr
+  }
+  
+  # replace NAs with zeros
+  comment_data_1$lexdiv_pos <- ifelse(is.na(comment_data_1$lexdiv_pos)==TRUE, 0, comment_data_1$lexdiv_pos)
+  
+  return(comment_data_1)
+  
+}
+
+```
+
+
+
+##Sorting policies 
+
+###I. Replies hidden
+```{r}
+#comment_data_1 <- comment_data_general_subset
+#View(comment_data_1)
+
+
+sort_pols_rh <- function(comment_data_1){
+  # calculates replies-hidden sorting policies for 1 discussion
+  # comment_data_1 is the dataset for 1 discussion
+  # returns df_sort_list_rh
+  
+  num_pinned <- comment_data_1 %>% filter(pinned_f == 1) %>% nrow()
+  comment_data_1_roots <- comment_data_1 %>% filter(is_root_comment==1)
+  
+  # CHRONOLOGICAL
+  # without pinned posts
+  df_sort1 <- comment_data_1 %>% group_by(article) %>% 
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, timestamp_f) # chronological
+  
+  # with pinned posts
+  df_sort2 <- comment_data_1 %>% group_by(article) %>%
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, desc(pinned_f), 
+            ifelse(comment_data_1_roots$pinned_f == 1,
+                   comment_data_1_roots$order,
+                   comment_data_1_roots$timestamp_f)) # pinned, then chronological
+  
+  # REVERSE CHRONOLOGICAL
+  # without pinned posts
+  df_sort3 <- comment_data_1 %>% group_by(article) %>% 
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, desc(timestamp_f)) # reverse chronological
+  
+  # with pinned posts
+  df_sort4 <- comment_data_1 %>% group_by(article) %>%
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, desc(pinned_f), 
+            ifelse(comment_data_1_roots$pinned_f == 1,
+                   comment_data_1_roots$order,
+                   desc(comment_data_1_roots$timestamp_f))) # pinned, then reverse chronological
+  
+  # MOST POSITIVE ABSOLUTE
+  # without pinned posts
+  df_sort5 <- comment_data_1 %>% group_by(article) %>% 
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, desc(votes_pos)) # most positive
+  
+  # with pinned posts
+  df_sort6 <- comment_data_1 %>% group_by(article) %>%
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, desc(pinned_f), 
+            ifelse(comment_data_1_roots$pinned_f == 1,
+                   comment_data_1_roots$order,
+                   desc(comment_data_1_roots$votes_pos))) # pinned, then most positive
+  
+  # MOST POSITIVE RELATIVE
+  # without pinned posts
+  df_sort7 <- comment_data_1 %>% group_by(article) %>% 
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, desc(votes_rel)) # most positive
+  
+  # with pinned posts
+  df_sort8 <- comment_data_1 %>% group_by(article) %>%
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, desc(pinned_f), 
+            ifelse(comment_data_1_roots$pinned_f == 1,
+                   comment_data_1_roots$order,
+                   desc(comment_data_1_roots$votes_rel))) # pinned, then most positive
+  
+  # MOST NEGATIVE ABSOLUTE
+  # without pinned posts
+  df_sort9 <- comment_data_1 %>% group_by(article) %>% 
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, desc(votes_neg)) # most negative
+  
+  # with pinned posts
+  df_sort10 <- comment_data_1 %>% group_by(article) %>%
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, desc(pinned_f), 
+            ifelse(comment_data_1_roots$pinned_f == 1,
+                   comment_data_1_roots$order,
+                   desc(comment_data_1_roots$votes_neg))) # pinned, then most negative
+  
+  # LEAST NEGATIVE ABSOLUTE
+  # without pinned posts
+  df_sort11 <- comment_data_1 %>% group_by(article) %>% 
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, votes_neg) # least negative
+  
+  # with pinned posts
+  df_sort12 <- comment_data_1 %>% group_by(article) %>%
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, desc(pinned_f), 
+            ifelse(comment_data_1_roots$pinned_f == 1,
+                   comment_data_1_roots$order,
+                   comment_data_1_roots$votes_neg)) # pinned, then least negative
+  
+  # ML-BASED NEGATIVE BINOMIAL - UPVOTES
+  # without pinned posts
+  df_sort13 <- comment_data_1 %>% group_by(article) %>% 
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, desc(up_vote_pred_nb)) 
+  
+  # with pinned posts
+  df_sort14 <- comment_data_1 %>% group_by(article) %>%
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, desc(pinned_f), 
+            ifelse(comment_data_1_roots$pinned_f == 1,
+                   comment_data_1_roots$order,
+                   desc(comment_data_1_roots$up_vote_pred_nb))) 
+  
+  
+  # ML-BASED RANDOM FOREST - UPVOTES
+  # without pinned posts
+  df_sort15 <- comment_data_1 %>% group_by(article) %>% 
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, desc(up_vote_pred_rf)) 
+  
+  # with pinned posts
+  df_sort16 <- comment_data_1 %>% group_by(article) %>%
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, desc(pinned_f), 
+            ifelse(comment_data_1_roots$pinned_f == 1,
+                   comment_data_1_roots$order,
+                   desc(comment_data_1_roots$up_vote_pred_rf)))
+  
+  # ML-BASED LOG REGRESSION - PINS
+  # without pinned posts
+  df_sort17 <- comment_data_1 %>% group_by(article) %>% 
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, desc(pin_pred_lr)) 
+  
+  # with pinned posts
+  df_sort18 <- comment_data_1 %>% group_by(article) %>%
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, desc(pinned_f), 
+            ifelse(comment_data_1_roots$pinned_f == 1,
+                   comment_data_1_roots$order,
+                   desc(comment_data_1_roots$pin_pred_lr)))
+  
+  
+  # ML-BASED RANDOM FOREST - PINS
+  # without pinned posts
+  df_sort19 <- comment_data_1 %>% group_by(article) %>% 
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, desc(pin_pred_rf))
+  
+  # with pinned posts
+  df_sort20 <- comment_data_1 %>% group_by(article) %>%
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, desc(pinned_f), 
+            ifelse(comment_data_1_roots$pinned_f == 1,
+                   comment_data_1_roots$order,
+                   desc(comment_data_1_roots$pin_pred_rf)))
+  
+  df_sort_list_rh <- list(# hidden replies
+                     df_sort1, df_sort2, df_sort3, df_sort4, df_sort5, 
+                     df_sort6, df_sort7, df_sort8, df_sort9, df_sort10, 
+                     df_sort11, df_sort12, df_sort13, df_sort14, df_sort15,
+                     df_sort16, df_sort17, df_sort18, df_sort19, df_sort20, 
+                     df_sort21, df_sort22)
+  
+  
+  return(df_sort_list_rh)
+}
+
+```
+
+###II. Replies shown in tree
+```{r}
+sort_pols_rt <- function(comment_data_1){
+  # calculates reply-tree sorting policies for 1 discussion
+  # comment_data_1 is the dataset for 1 discussion
+  # returns df_sort_list_rt
+  # arrange only roots chronologically but show replies beneath
+  
+  comment_data_1_roots <- comment_data_1 %>% filter(is_root_comment==1)
+  num_pinned <- comment_data_1_roots %>% filter(pinned_f == 1) %>% nrow()
+  
+  # get CHRONOLOGICAL order of root posts only
+  root_order <- comment_data_1 %>% filter(is_root_comment==1) %>% arrange(timestamp_f) %>% dplyr::select(root_of_tree)
+  root_order$order_roots <- 1:nrow(root_order)
+  comment_data_2 <- merge(comment_data_1, root_order, by = "root_of_tree", all.x=TRUE, sort = FALSE)
+  
+  # get CHRONOLOGICAL order of root posts only WITH PINNED
+  root_order <- comment_data_1 %>% filter(is_root_comment==1) %>% 
+    arrange(desc(pinned_f), ifelse(comment_data_1_roots$pinned_f == 1,
+                   comment_data_1_roots$order,
+                   comment_data_1_roots$timestamp_f)) %>% 
+              dplyr::select(root_of_tree)
+  root_order$order_roots <- 1:nrow(root_order)
+  comment_data_3 <- merge(comment_data_1, root_order, by = "root_of_tree", all.x=TRUE, sort = FALSE)
+
+  # CHRONOLOGICAL
+  # without pinned posts
+  df_sort23 <- comment_data_2 %>% group_by(article) %>% 
+    arrange(article, order_roots, order) # chronological
+  
+  # with pinned posts
+  df_sort24 <- comment_data_3 %>% group_by(article) %>%
+    arrange(article, order_roots, order) # pinned, then chronological
+  
+  # REVERSE CHRONOLOGICAL
+  # without pinned posts
+  df_sort25 <- comment_data_2 %>% group_by(article) %>%  
+    arrange(article, desc(order_roots), order) # rev chronological
+  
+  # get REVERSE CHRONOLOGICAL order of root posts only WITH PINNED
+  root_order <- comment_data_1 %>% filter(is_root_comment==1) %>% 
+    arrange(desc(pinned_f), ifelse(comment_data_1_roots$pinned_f == 1,
+                   comment_data_1_roots$order,
+                   desc(comment_data_1_roots$timestamp_f))) %>% 
+              dplyr::select(root_of_tree)
+  root_order$order_roots <- 1:nrow(root_order)
+  comment_data_3b <- merge(comment_data_1, root_order, by = "root_of_tree", all.x=TRUE, sort = FALSE)
+  
+  # with pinned posts
+  df_sort26 <- comment_data_3b %>% group_by(article) %>%  
+    arrange(article, order_roots, order) # pinned, then rev chronological
+  
+  # get VOTES_POS order of root posts only (high to low)
+  root_order <- comment_data_1 %>% filter(is_root_comment==1) %>% arrange(desc(votes_pos)) %>% dplyr::select(root_of_tree)
+  root_order$order_roots <- 1:nrow(root_order)
+  comment_data_4 <- merge(comment_data_1, root_order, by = "root_of_tree", all.x=TRUE, sort = FALSE)
+  
+  # get VOTES_POS order of root posts only WITH PINNED (high to low)
+  root_order <- comment_data_1 %>% filter(is_root_comment==1) %>% 
+    arrange(desc(pinned_f), ifelse(comment_data_1_roots$pinned_f == 1,
+                   comment_data_1_roots$order,
+                   desc(comment_data_1_roots$votes_pos))) %>% 
+    dplyr::select(root_of_tree)
+  root_order$order_roots <- 1:nrow(root_order)
+  comment_data_5 <- merge(comment_data_1, root_order, by = "root_of_tree", all.x=TRUE, sort = FALSE)
+  
+  # MOST POSITIVE ABSOLUTE
+  # without pinned posts
+  df_sort27 <- comment_data_4 %>% group_by(article) %>% 
+    arrange(article, order_roots, order) # most positive roots
+  
+  # with pinned posts
+  df_sort28 <- comment_data_5 %>% group_by(article) %>%
+    arrange(article, order_roots, order) # pinned, then most positive roots, then replies
+  
+  # get VOTES_REL order of root posts only (high to low)
+  root_order <- comment_data_1 %>% filter(is_root_comment==1) %>% arrange(desc(votes_rel)) %>% dplyr::select(root_of_tree)
+  root_order$order_roots <- 1:nrow(root_order)
+  comment_data_6 <- merge(comment_data_1, root_order, by = "root_of_tree", all.x=TRUE, sort = FALSE)
+  
+  # get VOTES_REL order of root posts only WITH PINNED (high to low)
+  root_order <- comment_data_1 %>% filter(is_root_comment==1) %>% 
+    arrange(desc(pinned_f), ifelse(comment_data_1_roots$pinned_f == 1,
+                   comment_data_1_roots$order,
+                   desc(comment_data_1_roots$votes_rel))) %>% 
+    dplyr::select(root_of_tree)
+  root_order$order_roots <- 1:nrow(root_order)
+  comment_data_7 <- merge(comment_data_1, root_order, by = "root_of_tree", all.x=TRUE, sort = FALSE)
+  
+  # MOST POSITIVE RELATIVE
+  # without pinned posts
+  df_sort29 <- comment_data_6 %>% group_by(article) %>% 
+    arrange(article, order_roots, order) # most positive
+  
+  # with pinned posts
+  df_sort30 <- comment_data_7 %>% group_by(article) %>%
+    arrange(article, order_roots, order) # pinned, then most positive
+  
+  
+  # get VOTES_NEG order of root posts only (high to low)
+  root_order <- comment_data_1 %>% filter(is_root_comment==1) %>% arrange(desc(votes_neg)) %>% dplyr::select(root_of_tree)
+  root_order$order_roots <- 1:nrow(root_order)
+  comment_data_8 <- merge(comment_data_1, root_order, by = "root_of_tree", all.x=TRUE, sort = FALSE)
+  
+  # get VOTES_NEG order of root posts only WITH PINNED (high to low)
+  root_order <- comment_data_1 %>% filter(is_root_comment==1) %>% 
+    arrange(desc(pinned_f), ifelse(comment_data_1_roots$pinned_f == 1,
+                   comment_data_1_roots$order,
+                   desc(comment_data_1_roots$votes_neg))) %>% 
+    dplyr::select(root_of_tree)
+  root_order$order_roots <- 1:nrow(root_order)
+  comment_data_9 <- merge(comment_data_1, root_order, by = "root_of_tree", all.x=TRUE, sort = FALSE)
+  
+  # MOST NEGATIVE ABSOLUTE
+  # without pinned posts
+  df_sort31 <- comment_data_8 %>% group_by(article) %>% 
+    arrange(article, order_roots, order) # most negative roots, then replies
+  
+  # with pinned posts
+  df_sort32 <- comment_data_9 %>% group_by(article) %>%
+    arrange(article, order_roots, order) # pinned, then most negative
+  
+  # LEAST NEGATIVE ABSOLUTE
+  # without pinned posts
+  df_sort33 <- comment_data_8 %>% group_by(article) %>% 
+    arrange(article, desc(order_roots), order) # least negative
+  
+  # get LEAST VOTES_NEG order of root posts only WITH PINNED (high to low)
+  root_order <- comment_data_1 %>% filter(is_root_comment==1) %>% 
+    arrange(desc(pinned_f), ifelse(comment_data_1_roots$pinned_f == 1,
+                   comment_data_1_roots$order,
+                   comment_data_1_roots$votes_neg)) %>% 
+    dplyr::select(root_of_tree)
+  root_order$order_roots <- 1:nrow(root_order)
+  comment_data_9b <- merge(comment_data_1, root_order, by = "root_of_tree", all.x=TRUE, sort = FALSE)
+  
+  # with pinned posts
+  df_sort34 <- comment_data_9b %>% group_by(article) %>%
+    arrange(article, desc(order_roots), order) # pinned, then least negative
+  
+  # get up_vote_pred_nb order of root posts only (high to low)
+  root_order <- comment_data_1 %>% filter(is_root_comment==1) %>% arrange(desc(up_vote_pred_nb)) %>% dplyr::select(root_of_tree)
+  root_order$order_roots <- 1:nrow(root_order)
+  comment_data_10 <- merge(comment_data_1, root_order, by = "root_of_tree", all.x=TRUE, sort = FALSE)
+  
+  # get up_vote_pred_nb order of root posts only WITH PINNED (high to low)
+  root_order <- comment_data_1 %>% filter(is_root_comment==1) %>% 
+    arrange(desc(pinned_f), ifelse(comment_data_1_roots$pinned_f == 1,
+                   comment_data_1_roots$order,
+                   desc(comment_data_1_roots$up_vote_pred_nb))) %>% 
+    dplyr::select(root_of_tree)
+  root_order$order_roots <- 1:nrow(root_order)
+  comment_data_11 <- merge(comment_data_1, root_order, by = "root_of_tree", all.x=TRUE, sort = FALSE)
+  
+  # ML-BASED NEGATIVE BINOMIAL
+  # without pinned posts
+  df_sort35 <- comment_data_10 %>% group_by(article) %>% 
+    arrange(article, order_roots, order) # most predicted upvotes roots, then replies
+  
+  # with pinned posts
+  df_sort36 <- comment_data_11 %>% group_by(article) %>%
+    arrange(article, order_roots, order) # pinned, then most predicted upvotes
+  
+  
+  # get up_vote_pred_rf order of root posts only (high to low)
+  root_order <- comment_data_1 %>% filter(is_root_comment==1) %>% arrange(desc(up_vote_pred_rf)) %>% dplyr::select(root_of_tree)
+  root_order$order_roots <- 1:nrow(root_order)
+  comment_data_12 <- merge(comment_data_1, root_order, by = "root_of_tree", all.x=TRUE, sort = FALSE)
+  
+  # get up_vote_pred_rf order of root posts only WITH PINNED (high to low)
+  root_order <- comment_data_1 %>% filter(is_root_comment==1) %>% 
+    arrange(desc(pinned_f), ifelse(comment_data_1_roots$pinned_f == 1,
+                   comment_data_1_roots$order,
+                   desc(comment_data_1_roots$up_vote_pred_rf))) %>% 
+    dplyr::select(root_of_tree)
+  root_order$order_roots <- 1:nrow(root_order)
+  comment_data_13 <- merge(comment_data_1, root_order, by = "root_of_tree", all.x=TRUE, sort = FALSE)
+  
+  # ML-BASED RANDOM FOREST
+  # without pinned posts
+  df_sort37 <- comment_data_12 %>% group_by(article) %>% 
+    arrange(article, order_roots, order) # most predicted upvotes roots, then replies
+  
+  # with pinned posts
+  df_sort38 <- comment_data_13 %>% group_by(article) %>%
+    arrange(article, order_roots, order) # pinned, then most predicted upvotes
+  
+  # get pin_pred_lr order of root posts only (high to low)
+  root_order <- comment_data_1 %>% filter(is_root_comment==1) %>% arrange(desc(pin_pred_lr)) %>% dplyr::select(root_of_tree)
+  root_order$order_roots <- 1:nrow(root_order)
+  comment_data_14 <- merge(comment_data_1, root_order, by = "root_of_tree", all.x=TRUE, sort = FALSE)
+  
+  # get pin_pred_lr order of root posts only WITH PINNED (high to low) 
+  root_order <- comment_data_1 %>% filter(is_root_comment==1) %>% 
+    arrange(desc(pinned_f), ifelse(comment_data_1_roots$pinned_f == 1,
+                   comment_data_1_roots$order,
+                   desc(comment_data_1_roots$pin_pred_lr))) %>% 
+    dplyr::select(root_of_tree)
+  root_order$order_roots <- 1:nrow(root_order)
+  comment_data_15 <- merge(comment_data_1, root_order, by = "root_of_tree", all.x=TRUE, sort = FALSE)
+  
+  # ML-BASED LOG REGRESSION - PIN
+  # without pinned posts
+  df_sort39 <- comment_data_14 %>% group_by(article) %>% 
+    arrange(article, order_roots, order) # most predicted pin roots
+  
+  # with pinned posts
+  df_sort40 <- comment_data_15 %>% group_by(article) %>%
+    arrange(article, order_roots, order) # pinned, then most predicted pins
+  
+  # get pin_pred_rf order of root posts only (high to low)
+  root_order <- comment_data_1 %>% filter(is_root_comment==1) %>% arrange(desc(pin_pred_rf)) %>% dplyr::select(root_of_tree)
+  root_order$order_roots <- 1:nrow(root_order)
+  comment_data_16 <- merge(comment_data_1, root_order, by = "root_of_tree", all.x=TRUE, sort = FALSE)
+  
+  # get pin_pred_rf order of root posts only, WITH PINNED (high to low)
+  root_order <- comment_data_1 %>% filter(is_root_comment==1) %>% 
+    arrange(desc(pinned_f), ifelse(comment_data_1_roots$pinned_f == 1,
+                   comment_data_1_roots$order,
+                   desc(comment_data_1_roots$pin_pred_rf))) %>% 
+    dplyr::select(root_of_tree)
+  root_order$order_roots <- 1:nrow(root_order)
+  comment_data_17 <- merge(comment_data_1, root_order, by = "root_of_tree", all.x=TRUE, sort = FALSE)
+  
+  # ML-BASED RANDOM FOREST - PIN
+  # without pinned posts
+  df_sort41 <- comment_data_16 %>% group_by(article) %>% 
+    arrange(article, order_roots, order) # most predicted pin roots
+  
+  # with pinned posts
+  df_sort42 <- comment_data_17 %>% group_by(article) %>% 
+    arrange(article, order_roots, order) # Pinned, most predicted pin roots
+  
+  
+  
+  
+  
+  df_sort_list_rt <- list( # reply trees
+                     df_sort23, df_sort24, df_sort25,
+                     df_sort26, df_sort27, df_sort28, df_sort29, df_sort30, 
+                     df_sort31, df_sort32, df_sort33, df_sort34, df_sort35, 
+                     df_sort36, df_sort37, df_sort38, df_sort39, df_sort40, 
+                     df_sort41, df_sort42, df_sort43, df_sort44)
+  
+  return(df_sort_list_rt)
+}
+
+
+```
+
+
+###III. Replies separately
+```{r}
+
+sort_pols_rl <- function(comment_data_1){
+  # calculates sorting policies with loose replies for 1 discussion
+  # comment_data_1 is the dataset for 1 discussion
+  # returns df_sort_list_rl
+  
+  num_pinned <- comment_data_1 %>% filter(pinned_f == 1) %>% nrow()
+
+  # CHRONOLOGICAL
+  # without pinned posts
+  df_sort45 <- comment_data_1 %>% group_by(article) %>% 
+    arrange(article, timestamp_f) # chronological
+  
+  # with pinned posts
+  df_sort46 <- comment_data_1 %>% group_by(article) %>%
+    arrange(article, desc(pinned_f), ifelse(comment_data_1$pinned_f == 1,
+                   comment_data_1$order,
+                   comment_data_1$timestamp_f)) # pinned, then chronological
+  
+  # REVERSE CHRONOLOGICAL
+  # without pinned posts
+  df_sort47 <- comment_data_1 %>% group_by(article) %>% 
+    arrange(article, desc(timestamp_f)) # reverse chronological
+  
+  # with pinned posts
+  df_sort48 <- comment_data_1 %>% group_by(article) %>%
+    arrange(article, desc(pinned_f), 
+            ifelse(comment_data_1$pinned_f == 1,
+                   comment_data_1$order,
+                   desc(comment_data_1$timestamp_f))) # pinned, then reverse chronological
+  
+  # MOST POSITIVE ABSOLUTE
+  # without pinned posts
+  df_sort49 <- comment_data_1 %>% group_by(article) %>% 
+    arrange(article, desc(votes_pos)) # most positive
+  
+  # with pinned posts
+  df_sort50 <- comment_data_1 %>% group_by(article) %>%
+    arrange(article, desc(pinned_f), 
+            ifelse(comment_data_1$pinned_f == 1,
+                   comment_data_1$order,
+                   desc(comment_data_1$votes_pos))) # pinned, then most positive
+  
+  # MOST POSITIVE RELATIVE
+  # without pinned posts
+  df_sort51 <- comment_data_1 %>% group_by(article) %>% 
+    arrange(article, desc(votes_rel)) # most positive
+  
+  # with pinned posts
+  df_sort52 <- comment_data_1 %>% group_by(article) %>%
+    arrange(article, desc(pinned_f), 
+            ifelse(comment_data_1$pinned_f == 1,
+                   comment_data_1$order,
+                   desc(comment_data_1$votes_rel))) # pinned, then most positive
+  
+  # MOST NEGATIVE ABSOLUTE
+  # without pinned posts
+  df_sort53 <- comment_data_1 %>% group_by(article) %>% 
+    arrange(article, desc(votes_neg)) # most negative
+  
+  # with pinned posts
+  df_sort54 <- comment_data_1 %>% group_by(article) %>%
+    arrange(article, desc(pinned_f), ifelse(comment_data_1$pinned_f == 1,
+                   comment_data_1$order,
+                   desc(comment_data_1$votes_neg))) # pinned, then most negative
+  
+  # LEAST NEGATIVE ABSOLUTE
+  # without pinned posts
+  df_sort55 <- comment_data_1 %>% group_by(article) %>% 
+    arrange(article, votes_neg) # least negative
+  
+  # with pinned posts
+  df_sort56 <- comment_data_1 %>% group_by(article) %>%
+    arrange(article, desc(pinned_f), ifelse(comment_data_1$pinned_f == 1,
+                   comment_data_1$order,
+                   comment_data_1$votes_neg)) # pinned, then least negative
+  
+  
+  # ML-BASED NEGATIVE BINOMIAL
+  # without pinned posts
+  df_sort57 <- comment_data_1 %>% group_by(article) %>% 
+    arrange(article, desc(up_vote_pred_nb)) 
+  
+  # with pinned posts
+  df_sort58 <- comment_data_1 %>% group_by(article) %>%
+    arrange(article, desc(pinned_f), 
+            ifelse(comment_data_1$pinned_f == 1,
+                   comment_data_1$order,
+                   desc(comment_data_1$up_vote_pred_nb)))
+  
+  # ML-BASED RANDOM FOREST
+  # without pinned posts
+  df_sort59 <- comment_data_1 %>% group_by(article) %>% 
+    arrange(article, desc(up_vote_pred_rf)) 
+  
+  # with pinned posts
+  df_sort60 <- comment_data_1 %>% group_by(article) %>%
+    arrange(article, desc(pinned_f), 
+            ifelse(comment_data_1$pinned_f == 1,
+                   comment_data_1$order,
+                   desc(comment_data_1$up_vote_pred_rf)))
+  
+  # ML-BASED LOG REG - PINS
+  # without pinned posts
+  df_sort61 <- comment_data_1 %>% group_by(article) %>% 
+    arrange(article, desc(pin_pred_lr)) 
+  
+  # with pinned posts
+  df_sort62 <- comment_data_1 %>% group_by(article) %>% 
+    arrange(article, desc(pinned_f), 
+            ifelse(comment_data_1$pinned_f == 1,
+                   comment_data_1$order,
+                   desc(comment_data_1$pin_pred_lr)))
+  
+  # ML-BASED RANDOM FOREST - PINS
+  # without pinned posts
+  df_sort63 <- comment_data_1 %>% group_by(article) %>%
+    arrange(article, desc(pin_pred_rf))
+  
+  # with pinned posts
+  df_sort64 <- comment_data_1 %>% group_by(article) %>%
+    arrange(article, desc(pinned_f), 
+            ifelse(comment_data_1$pinned_f == 1,
+                   comment_data_1$order,
+                   desc(comment_data_1$pin_pred_rf)))
+  
+  
+  
+  df_sort_list_rl <- list( # replies loose
+                     df_sort45,
+                     df_sort46, df_sort47, df_sort48, df_sort49, df_sort50,
+                     df_sort51, df_sort52, df_sort53, df_sort54, df_sort55,
+                     df_sort56, df_sort57, df_sort58, df_sort59, df_sort60, 
+                     df_sort61, df_sort62, df_sort63, df_sort64, df_sort65, 
+                     df_sort66)
+  
+  return(df_sort_list_rl)
+}
+
+```
+
+###IV. Best and worst policies
+```{r}
+# calculates best, worst, and baseline sorting policies for 1 discussion
+  # comment_data_1 is the dataset for 1 discussion
+  # returns df_sort_list_bl
+
+sort_pols_bw_SMOG <- function(comment_data_1){
+
+  # BEST
+  df_sort_best <- comment_data_1 %>% group_by(article) %>% 
+    arrange(article, desc(SMOG_readability_pos))
+
+  # WORST
+  df_sort_worst <- comment_data_1 %>% group_by(article) %>% 
+    arrange(article, SMOG_readability_pos)
+  
+  df_sort_list_bw <- list(df_sort_best, df_sort_worst)
+  
+  return(df_sort_list_bw)
+}
+
+sort_pols_bw_lexdiv <- function(comment_data_1){
+
+  # BEST
+  df_sort_best <- comment_data_1 %>% group_by(article) %>% 
+    arrange(article, desc(lexdiv_pos))
+
+  # WORST
+  df_sort_worst <- comment_data_1 %>% group_by(article) %>% 
+    arrange(article, lexdiv_pos)
+  
+  df_sort_list_bw <- list(df_sort_best, df_sort_worst)
+  
+  return(df_sort_list_bw)
+}
+
+sort_pols_bw_cosine <- function(comment_data_1){
+
+  # BEST
+  df_sort_best <- comment_data_1 %>% group_by(article) %>% 
+    arrange(article, desc(cosine_1_pos))
+
+  # WORST
+  df_sort_worst <- comment_data_1 %>% group_by(article) %>% 
+    arrange(article, cosine_1_pos)
+  
+  df_sort_list_bw <- list(df_sort_best, df_sort_worst)
+  
+  return(df_sort_list_bw)
+}
+
+sort_pols_bw_sentclass <- function(comment_data_1){
+
+  # BEST
+  df_sort_best <- comment_data_1 %>% group_by(article) %>% 
+    arrange(article, desc(sentiment_class_c))
+
+  # WORST
+  df_sort_worst <- comment_data_1 %>% group_by(article) %>% 
+    arrange(article, sentiment_class_c)
+  
+  df_sort_list_bw <- list(df_sort_best, df_sort_worst)
+  
+  return(df_sort_list_bw)
+}
+
+```
+
+
+###V. Random policies
+```{r}
+sort_pols_rand <- function(comment_data_1){
+  # calculates replies-hidden sorting policies for 1 discussion
+  # comment_data_1 is the dataset for 1 discussion
+  # returns df_sort_list_rh
+  
+  num_pinned <- comment_data_1 %>% filter(pinned_f == 1) %>% nrow()
+  comment_data_1_roots <- comment_data_1 %>% filter(is_root_comment==1)
+  
+  # RANDOM ORDERING - REPLIES HIDDEN
+  # without pinned posts
+  df_sort21 <- comment_data_1 %>% group_by(article) %>% 
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, runif(nrow(.)))
+  
+  # with pinned posts
+  df_sort22 <- comment_data_1 %>% group_by(article) %>%
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, desc(pinned_f), 
+            ifelse(comment_data_1_roots$pinned_f == 1,
+                   comment_data_1_roots$order,
+                   runif(nrow(.)-num_pinned)))
+  
+  # REPLY TREES
+  # get random order of root posts only 
+  root_order <- comment_data_1 %>% filter(is_root_comment==1) %>% arrange(runif(nrow(.))) %>%
+    dplyr::select(root_of_tree)
+  root_order$order_roots <- 1:nrow(root_order)
+  comment_data_18 <- merge(comment_data_1, root_order, by = "root_of_tree", all.x=TRUE, sort = FALSE)
+  
+  # get random order of root posts only, WITH PINNED
+  root_order <- comment_data_1_roots %>% 
+    mutate(random_value = ifelse(comment_data_1_roots$pinned_f == 1,
+       comment_data_1_roots$order,
+       runif(nrow(comment_data_1_roots), 
+             min = num_pinned,
+             max = num_pinned + 1))) %>% 
+    arrange(random_value) %>% 
+    dplyr::select(root_of_tree)
+  root_order$order_roots <- 1:nrow(root_order)
+  comment_data_19 <- merge(comment_data_1, root_order, by = "root_of_tree", all.x=TRUE, sort = FALSE)
+  
+  # RANDOM ORDERING
+  # without pinned posts
+  df_sort43 <- comment_data_18 %>% group_by(article) %>% 
+    arrange(article, order_roots, order) # random
+  
+  # with pinned posts
+  df_sort44 <- comment_data_19 %>% group_by(article) %>% 
+    arrange(article, order_roots, order) # Pinned, random
+  
+  
+  # RANDOM ORDER - REPLIES LOOSE
+  # without pinned posts
+  df_sort65 <- comment_data_1 %>% group_by(article) %>%
+    arrange(article, runif(nrow(comment_data_1)))
+  
+  # with pinned posts
+  df_sort66 <- comment_data_1 %>% group_by(article) %>%
+    arrange(article, 
+            desc(pinned_f), 
+            ifelse(comment_data_1$pinned_f == 1,
+       comment_data_1$order,
+       runif(nrow(comment_data_1), 
+             min = num_pinned,
+             max = num_pinned + 1)))
+  
+  
+  df_sort_list_rand <- list(
+                     df_sort21, df_sort22, 
+                     df_sort43, df_sort44, 
+                     df_sort65, df_sort66)
+  
+  return(df_sort_list_rand)
+  
+}
+
+sorting_policies_list_flat_rand <- sorting_policies_list_flat[c(21,22,43,44,65,66, 67, 68)]
+```
+
+
+
+###Sum up sorting policies
+```{r}
+sorting_policies <- c("chron", "chron_pinned", 
+                      "rev-chron", "rev-chron_pinned", 
+                      "pos-abs", "pos-abs_pinned", 
+                      "pos-rel", "pos-rel_pinned",  
+                      "neg-abs", "neg-abs_pinned",  
+                      "least-neg-abs", "least-neg-abs_pinned", 
+                      "pred-nb", "pred-nb_pinned",
+                      "pred-rf", "pred-rf_pinned", 
+                      "pin-pred-lr", "pin-pred-lr_pinned",
+                      "pin-pred-rf", "pin-pred-rf_pinned", 
+                      "random", "random_pinned")
+
+sorting_policies_rh <- paste0(sorting_policies, "_", "rh")
+sorting_policies_rt <- paste0(sorting_policies, "_", "rt")
+sorting_policies_rl <- paste0(sorting_policies, "_", "rl")
+
+sorting_policies_list <- c(sorting_policies_rh, sorting_policies_rt, sorting_policies_rl, "best", "worst")
+# unlist sorting policies list
+sorting_policies_list_flat <- unlist(sorting_policies_list)
+
+length(sorting_policies_list_flat)
+
+sorting_policies_fullnames <- c('chronological, replies hidden','pinned, chronological, replies hidden',
+                                'reverse-chronological, replies hidden','pinned, reverse-chronological, replies hidden',
+                                'absolute positive, replies hidden','pinned, absolute positive, replies hidden',
+                                'relative positive, replies hidden','pinned, relative positive, replies hidden',
+                                'absolute negative, replies hidden','pinned, absolute negative, replies hidden',
+                                'least absolute negative, replies hidden','pinned, least absolute negative, replies hidden',
+                                'reg-predicted upvotes, replies hidden', 'pinned, reg-predicted upvotes, replies hidden',
+                                'ML-predicted upvotes, replies hidden', 'pinned, ML-predicted upvotes, replies hidden',
+                                'reg-predicted pins, replies hidden', 'pinned, reg-predicted pins, replies hidden',
+                                'ML-predicted pins, replies hidden', 'pinned, ML-predicted pins, replies hidden',
+                                'random, replies hidden', 'pinned, random, replies hidden',
+                                
+                                'chronological, reply trees','pinned, chronological, reply trees',
+                                'reverse-chronological, reply trees','pinned, reverse-chronological, reply trees',
+                                'absolute positive, reply trees','pinned, absolute positive, reply trees',
+                                'relative positive, reply trees','pinned, relative positive, reply trees',
+                                'absolute negative, reply trees','pinned, absolute negative, reply trees',
+                                'least absolute negative, reply trees','pinned, least absolute negative, reply trees',
+                                'reg-predicted upvotes, reply trees', 'pinned, reg-predicted upvotes, reply trees',
+                                'ML-predicted upvotes, reply trees', 'pinned, ML-predicted upvotes, reply trees',
+                                'reg-predicted pins, reply trees', 'pinned, reg-predicted pins, reply trees',
+                                'ML-predicted pins, reply trees', 'pinned, ML-predicted pins, reply trees',
+                                'random, reply trees', 'pinned, random, reply trees',
+                                
+                                'chronological, replies loose','pinned, chronological, replies loose',
+                                'reverse-chronological, replies loose','pinned, reverse-chronological, replies loose',
+                                'absolute positive, replies loose','pinned, absolute positive, replies loose',
+                                'relative positive, replies loose','pinned, relative positive, replies loose',
+                                'absolute negative, replies loose','pinned, absolute negative, replies loose',
+                                'least absolute negative, replies loose','pinned, least absolute negative, replies loose',
+                                'reg-predicted upvotes, replies loose', 'pinned, reg-predicted upvotes, replies loose',
+                                'ML-predicted upvotes, replies loose', 'pinned, ML-predicted upvotes, replies loose',
+                                'reg-predicted pins, replies loose', 'pinned, reg-predicted pins, replies loose',
+                                'ML-predicted pins, replies loose', 'pinned, ML-predicted pins, replies loose',
+                                'random, replies loose', 'pinned, random, replies loose',
+                                
+                                'best possible, replies loose','worst possible, replies loose',
+                                'baseline'
+)
+
+length(sorting_policies_fullnames)
+
+```
+
+
+
+#Average over all articles - x = number of articles, y = cumsum, then ratios Q
+```{r}
+
+# create lists to store dataframes of each policy and discussion, by each different n
+df_smog_list <- list(data.frame(matrix(nrow = 0, ncol = 66)), data.frame(matrix(nrow = 0, ncol = 66)), 
+                     data.frame(matrix(nrow = 0, ncol = 66)), data.frame(matrix(nrow = 0, ncol = 66)))
+
+df_lexdiv_list <- list(data.frame(matrix(nrow = 0, ncol = 66)), data.frame(matrix(nrow = 0, ncol = 66)),
+                       data.frame(matrix(nrow = 0, ncol = 66)), data.frame(matrix(nrow = 0, ncol = 66)))
+
+df_sim_list <- list(data.frame(matrix(nrow = 0, ncol = 66)), data.frame(matrix(nrow = 0, ncol = 66)), 
+                     data.frame(matrix(nrow = 0, ncol = 66)), data.frame(matrix(nrow = 0, ncol = 66)))
+
+df_sentclass_list <- list(data.frame(matrix(nrow = 0, ncol = 66)), data.frame(matrix(nrow = 0, ncol = 66)),
+                        data.frame(matrix(nrow = 0, ncol = 66)), data.frame(matrix(nrow = 0, ncol = 66)))
+
+# score list
+score_list <- list("SMOG_readability_pos", "lexdiv_pos", "cosine_1_pos", 
+                     "sentiment_class_c")
+
+
+library(dplyr)
+# see how many articles have less than x comments
+comments_count <- comment_data_general %>% group_by(article) %>% count()
+x <- 100
+100*sum(comments_count$n > x)/nrow(comments_count) # proportion of articles with at least n comments
+100*sum(comments_count$n[comments_count$n > x])/sum(comments_count$n) # proportion of comments where n > n
+
+# exclude all articles with less than 100 comments
+long_discussions <- comments_count$article[comments_count$n > 100]
+length(long_discussions)
+
+for(a in long_discussions){
+  
+  #a <- long_discussions[[1]] # to test
+  
+  print(which(long_discussions == a))
+  
+  # get subset dataframe
+  comment_data_a <- comment_data_general[which(comment_data_general$article == a),]
+  
+  # get ns
+  n_list <- list(10,50,100,nrow(comment_data_a))
+  
+  # format scores
+  comment_data_a <- format_scores(comment_data_a)
+  
+  # sort 48 ways
+  df_sort_list_rh <- sort_pols_rh(comment_data_a) # only root comments
+  df_sort_list_rt <- sort_pols_rt(comment_data_a) # all comments
+  df_sort_list_rl <- sort_pols_rl(comment_data_a) # all comments
+  
+  # 1. SMOG
+  df_sort_list_bw <- sort_pols_bw_SMOG(comment_data_a)
+  df_sort_list <- c(df_sort_list_rh, df_sort_list_rt, df_sort_list_rl, df_sort_list_bw) # add to sorting 
+  df_t <- cumsum_score(df_sort_list, score = score_list[[1]], sorting_policies_list_flat) # cumulative sum of score
+  for(i in 1:4){ # for each n, get Qs and collect in df_smog_list
+    avg_ratios <- get_Q(df_t, cut_off = n_list[[i]])
+    df_smog_list[[i]] <- rbind(df_smog_list[[i]], avg_ratios)
+  }
+  
+  # 2. Lexdiv
+  df_sort_list_bw <- sort_pols_bw_lexdiv(comment_data_a)
+  df_sort_list <- c(df_sort_list_rh, df_sort_list_rt, df_sort_list_rl, df_sort_list_bw)
+  df_t <- cumsum_score(df_sort_list, score = score_list[[2]], sorting_policies_list_flat) # cumulative sum of score
+  for(i in 1:4){ # for each n, get Qs and collect in df_lexdiv_list
+    avg_ratios <- get_Q(df_t, cut_off = n_list[[i]])
+    df_lexdiv_list[[i]] <- rbind(df_lexdiv_list[[i]], avg_ratios)
+  }
+  
+  # 3. Similarity
+  df_sort_list_bw <- sort_pols_bw_cosine(comment_data_a)
+  df_sort_list <- c(df_sort_list_rh, df_sort_list_rt, df_sort_list_rl, df_sort_list_bw)
+  df_t <- cumsum_score(df_sort_list, score = score_list[[3]], sorting_policies_list_flat) # cumulative sum of score
+  for(i in 1:4){ # for each n, get Qs 
+    avg_ratios <- get_Q(df_t, cut_off = n_list[[i]])
+    df_sim_list[[i]] <- rbind(df_sim_list[[i]], avg_ratios)
+  }
+  
+  # 4. Sentiment class
+  df_sort_list_bw <- sort_pols_bw_sentclass(comment_data_a)
+  df_sort_list <- c(df_sort_list_rh, df_sort_list_rt, df_sort_list_rl, df_sort_list_bw)
+  df_t <- cumsum_score(df_sort_list, score = score_list[[4]], sorting_policies_list_flat) # cumulative sum of score
+  for(i in 1:4){ # for each n, get Qs 
+    avg_ratios <- get_Q(df_t, cut_off = n_list[[i]])
+    df_sentclass_list[[i]] <- rbind(df_sentclass_list[[i]], avg_ratios)
+  }
+  
+  #######################
+  
+  
+}
+
+for(i in 1:4){
+  colnames(df_smog_list[[i]]) <- sorting_policies_list_flat[1:60]
+  colnames(df_lexdiv_list[[i]]) <- sorting_policies_list_flat[1:60]
+  colnames(df_sim_list[[i]]) <- sorting_policies_list_flat[1:60]
+  colnames(df_sentclass_list[[i]]) <- sorting_policies_list_flat[1:60]
+}
+
+length(long_discussions)
+
+tail(df_sentclass_list[[1]])
+
+```
+
+
+#Average over all articles - random 6 policies only
+```{r}
+
+# create lists to store dataframes of each policy and discussion, by each different n
+df_smog_list <- list(data.frame(matrix(nrow = 0, ncol = 6)), data.frame(matrix(nrow = 0, ncol = 6)), 
+                     data.frame(matrix(nrow = 0, ncol = 6)), data.frame(matrix(nrow = 0, ncol = 6)))
+
+df_lexdiv_list <- list(data.frame(matrix(nrow = 0, ncol = 6)), data.frame(matrix(nrow = 0, ncol = 6)),
+                       data.frame(matrix(nrow = 0, ncol = 6)), data.frame(matrix(nrow = 0, ncol = 6)))
+
+df_sim_list <- list(data.frame(matrix(nrow = 0, ncol = 6)), data.frame(matrix(nrow = 0, ncol = 6)), 
+                     data.frame(matrix(nrow = 0, ncol = 6)), data.frame(matrix(nrow = 0, ncol = 6)))
+
+df_sentclass_list <- list(data.frame(matrix(nrow = 0, ncol = 6)), data.frame(matrix(nrow = 0, ncol = 6)),
+                        data.frame(matrix(nrow = 0, ncol = 6)), data.frame(matrix(nrow = 0, ncol = 6)))
+
+# score list
+score_list <- list("SMOG_readability_pos", "lexdiv_pos", "cosine_1_pos", 
+                     "sentiment_class_c")
+
+library(dplyr)
+# see how many articles have less than x comments
+comments_count <- comment_data_general %>% group_by(article) %>% count()
+x <- 100
+100*sum(comments_count$n > x)/nrow(comments_count) # proportion of articles with at least n comments
+100*sum(comments_count$n[comments_count$n > x])/sum(comments_count$n) # proportion of comments where n > n
+
+# exclude all articles with less than 100 comments
+long_discussions <- comments_count$article[comments_count$n > 100]
+length(long_discussions)
+
+for(a in long_discussions){
+  
+  #a <- long_discussions[[1]] # to test
+  
+  print(which(long_discussions == a))
+  
+  # get subset dataframe
+  comment_data_a <- comment_data_general[which(comment_data_general$article == a),]
+  
+  # get ns
+  n_list <- list(10,50,100,nrow(comment_data_a))
+  
+  # format scores
+  comment_data_a <- format_scores(comment_data_a)
+  
+  # sort 48 ways
+  #df_sort_list_rh <- sort_pols_rh(comment_data_a) # only root comments
+  #df_sort_list_rt <- sort_pols_rt(comment_data_a) # all comments
+  #df_sort_list_rl <- sort_pols_rl(comment_data_a) # all comments
+  df_sort_list_rand <- sort_pols_rand(comment_data_a)
+  
+  # 1. SMOG
+  df_sort_list_bw <- sort_pols_bw_SMOG(comment_data_a)
+  df_sort_list <- c(df_sort_list_rand, df_sort_list_bw) # add to sorting 
+  df_t <- cumsum_score(df_sort_list, score = score_list[[1]], sorting_policies_list_flat_rand) # cumulative sum of score
+  for(i in 1:4){ # for each n, get Qs and collect in df_smog_list
+    avg_ratios <- get_Q(df_t, cut_off = n_list[[i]])
+    df_smog_list[[i]] <- rbind(df_smog_list[[i]], avg_ratios)
+  }
+  
+  # 2. Lexdiv
+  df_sort_list_bw <- sort_pols_bw_lexdiv(comment_data_a)
+  df_sort_list <- c(df_sort_list_rand, df_sort_list_bw)
+  df_t <- cumsum_score(df_sort_list, score = score_list[[2]], sorting_policies_list_flat_rand) # cumulative sum of score
+  for(i in 1:4){ # for each n, get Qs and collect in df_lexdiv_list
+    avg_ratios <- get_Q(df_t, cut_off = n_list[[i]])
+    df_lexdiv_list[[i]] <- rbind(df_lexdiv_list[[i]], avg_ratios)
+  }
+  
+  # 3. Similarity
+  df_sort_list_bw <- sort_pols_bw_cosine(comment_data_a)
+  df_sort_list <- c(df_sort_list_rand, df_sort_list_bw)
+  df_t <- cumsum_score(df_sort_list, score = score_list[[3]], sorting_policies_list_flat_rand) # cumulative sum of score
+  for(i in 1:4){ # for each n, get Qs 
+    avg_ratios <- get_Q(df_t, cut_off = n_list[[i]])
+    df_sim_list[[i]] <- rbind(df_sim_list[[i]], avg_ratios)
+  }
+  
+  # 4. Sentiment class
+  df_sort_list_bw <- sort_pols_bw_sentclass(comment_data_a)
+  df_sort_list <- c(df_sort_list_rand, df_sort_list_bw)
+  df_t <- cumsum_score(df_sort_list, score = score_list[[4]], sorting_policies_list_flat_rand) # cumulative sum of score
+  for(i in 1:4){ # for each n, get Qs 
+    avg_ratios <- get_Q(df_t, cut_off = n_list[[i]])
+    df_sentclass_list[[i]] <- rbind(df_sentclass_list[[i]], avg_ratios)
+  }
+  
+  #######################
+  
+  
+}
+
+for(i in 1:4){
+  colnames(df_smog_list[[i]]) <- sorting_policies_list_flat_rand[1:6]
+  colnames(df_lexdiv_list[[i]]) <- sorting_policies_list_flat_rand[1:6]
+  colnames(df_sim_list[[i]]) <- sorting_policies_list_flat_rand[1:6]
+  colnames(df_sentclass_list[[i]]) <- sorting_policies_list_flat_rand[1:6]
+}
+
+length(long_discussions)
+
+tail(df_sentclass_list[[1]])
+
+```
+
+
+
+###Export
+```{r}
+# all 6 policies
+names_all <- c("df_smog_list", "df_lexdiv_list", "df_sim_list", 
+               "df_sentclass_list")
+dfs_list <- list(df_smog_list, df_lexdiv_list, df_sim_list, 
+               df_sentclass_list)
+
+for(n in 1:4){ #loop through ns
+  print(paste0("n: ", n))
+  
+  for(i in 1:4){ # loop through feature scores
+    
+    print(i)
+    data_to_export <- dfs_list[[i]][[n]]
+    write.csv(data_to_export, paste0(names_all[[i]], "_", n, ".csv"))
+    }
+  
+}
+
+dfs_list[[1]]
+
+length(dfs_list)
+
+df_smog_list
+```
+

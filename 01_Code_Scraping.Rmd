@@ -16,6 +16,7 @@ library(httr)
 library(dplyr)
 
 ```
+
 #PREPARATION
 ##Der STANDARD Crawler Rules
 
@@ -94,7 +95,7 @@ accept_button$clickElement()
 ```{r}
 genres <- c("Wirtschaft","International","Inland","Web","Sport","Panorama","Kultur","Etat","Wissenschaft","Lifestyle","Diskurs","Karriere", "Immobilien","Zukunft","Gesundheit","Recht","Familie","Bildung","Reisen","dieStandard","Podcast","Video", "Mobilitaet")
 
-dates_raw <- seq(as.Date("2022/10/1"), as.Date("2022/10/31"), by="days")
+dates_raw <- seq(as.Date("2022/09/1"), as.Date("2022/10/31"), by="days")
 dates <- sapply(dates_raw, function(x) {gsub("(\\D)0", "\\1", format(x, "%Y/%m/%d"))})
 
 # get genre URLs
@@ -133,14 +134,15 @@ for(i in genre_urls){
 }
 
 article_links
-write.csv(article_links, "article_links_1022.csv")
+write.csv(article_links, "article_links.csv")
 
 # remove liveberichte
 article_links_clean <- article_links[which(startsWith(article_links, "/"))]
 length(article_links_clean)
-write.csv(article_links_clean, "article_links_cleaned_1022.csv")
+write.csv(article_links_clean, "article_links_cleaned.csv")
 ```
 
+### merge 2 months together
 ```{r}
 # import article links
 article_links_clean_0922 <- unlist(c(read.csv("article_links_cleaned_0922.csv", skip=1, header=FALSE)[,2]))
@@ -153,18 +155,10 @@ article_links_clean <- c(article_links_clean_0922, article_links_clean_1022)
 ##Scrape article info
 ```{r}
 # september article_info
-View(article_info_0922)
-
 article_info <- data.frame(matrix(ncol = 7))
 names(article_info) <- c("title", "subtitle", "genre1", "genre2", "genre3", "date", "text")
 
-# import article links
-article_links_clean_0922 <- unlist(c(read.csv("article_links_cleaned_0922.csv", skip=1, header=FALSE)[,2]))
-article_links_clean_1022 <- unlist(c(read.csv("article_links_cleaned_1022.csv", skip=1, header=FALSE)[,2]))
-
-article_links_clean <- c(article_links_clean_0922, article_links_clean_1022)
-
-for(i in article_links_clean[1909:length(article_links_clean)]){
+for(i in article_links_clean[1:length(article_links_clean)]){
   Sys.sleep(1)
   
   # navigate to article page
@@ -214,11 +208,10 @@ for(i in article_links_clean[1909:length(article_links_clean)]){
 
 View(article_info)
 
-
 article_info$url <- article_links_clean
 
 # safety copy 
-write.csv(article_info, "article_info_1022.csv")
+write.csv(article_info, "article_info.csv")
 
 ```
 
@@ -230,23 +223,28 @@ article_info_1022 <- read.csv("article_info_1022.csv")
 article_info_1022 <- article_info_1022[2:9]
 
 article_info <- rbind(article_info_0922, article_info_1022)
+
+nrow(article_info)
+View(article_info)
+length(unique(article_info$title))
 ```
+
 
 
 #COMMENTS
 ##Scrape comment info
 ```{r}
 # 1. blank dataframe
-#comment_info_general <- data.frame()
-comment_info_general <- data.frame(comment_info_general_SCRAPING)
+comment_info_general <- data.frame()
+#comment_info_general <- data.frame(comment_info_general_SCRAPING)
 
-# 2. manuell antworten ausklappen
+# 2. MANUALLY CLICK ONCE TO SHOW ALL REPLIES, any article discussion
 url <- paste0("https://www.derstandard.at", article_links_clean[2508])
 driver$navigate(url)
 
 
 # loop through articles
-for(i in article_links_clean){
+for(i in article_links_clean[1:length(article_links_clean)]){
   Sys.sleep(1)
   print(paste0("article number: ",which(article_links_clean == i)))
   
@@ -412,11 +410,9 @@ write.csv(comment_info_general, "comment_info_091022_02.csv")
 
 
 # copy september comment info general
-comment_info_general_SCRAPING <- data.frame(comment_info_general)
+#comment_info_general_SCRAPING <- data.frame(comment_info_general)
 
 nrow(comment_info_general)
-
-
 names(comment_info_general) == names(comment_info)
 
 ```
@@ -435,6 +431,10 @@ comment_info_general <- comment_info_general[-c(1037254, 1037257, 1037256, 10372
 comment_info_general$pinned[1037254] <- " Angeheftet ·"
 
 
+nrow(comment_info_general)
+View(comment_info_general[1:10,])
+length(unique(comment_info_general$article))
+
 ```
 
 
@@ -446,13 +446,8 @@ comment_info_d1 <- comment_info_general %>% filter(article == "/story/2000139939
 
 View(comment_info_d1)
 
-comment_info_general[1037254,]
-
-comment_info_general[,]
-
-
-
 ```
+
 
 
 #Close the session
@@ -460,3 +455,4 @@ comment_info_general[,]
 driver$close()
 rD$server$stop()
 ```
+

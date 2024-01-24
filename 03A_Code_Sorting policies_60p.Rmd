@@ -1,0 +1,2412 @@
+---
+title: "03_Code_Sorting policies"
+output: html_document
+date: "2023-08-07"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyr)
+library(ggplot2)
+library(dplyr)
+
+head(comment_data_general)
+
+setwd("C:/Users/flora/OneDrive - London School of Economics/Thesis_Social Navigation/Thesis")
+```
+
+
+#Distribution of features in final dataset (2.6k articles)
+```{r, fig.width= 10, fig.height=10}
+
+comment_data_longdiscussions <- data.frame(matrix(ncol = ncol(comment_data_general), nrow = 0))
+colnames(comment_data_longdiscussions) <- colnames(comment_data_general)
+
+for(a in long_discussions){
+  
+  print(which(long_discussions == a))
+  
+  # get subset dataframe
+  comment_data_a <- comment_data_general[which(comment_data_general$article == a),]
+  
+  # format scores
+  comment_data_a <- format_scores(comment_data_a)
+  
+  # add to dataframe
+  comment_data_longdiscussions <- rbind(comment_data_longdiscussions, comment_data_a)
+  
+}
+
+colnames(comment_data_longdiscussions)
+library(hrbrthemes)
+
+p_smog <- ggplot(data = comment_data_longdiscussions, aes(x = SMOG_readability_pos)) +
+  geom_density(fill="#69b3a2", color="#e9ecef", alpha=0.8) +
+  labs(title = "Readability") 
+
+p_lexdiv <- ggplot(data = comment_data_longdiscussions, aes(x = lexdiv_pos)) +
+  geom_density(fill="#69b3a2", color="#e9ecef", alpha=0.8) +
+  labs(title = "Lexical diversity") 
+
+p_cosine <- ggplot(data = comment_data_longdiscussions, aes(x = cosine_1_pos)) +
+  geom_density(fill="#69b3a2", color="#e9ecef", alpha=0.8) +
+  labs(title = "Topical similarity") 
+
+p_sentpos <- ggplot(data = comment_data_longdiscussions, aes(x = sentiment_prob_pos)) +
+  geom_density(fill="#69b3a2", color="#e9ecef", alpha=0.8) +
+  labs(title = "Positive sentiment") +
+  ylim(0,7)
+
+p_sentneu <- ggplot(data = comment_data_longdiscussions, aes(x = sentiment_prob_neu)) +
+  geom_density(fill="#69b3a2", color="#e9ecef", alpha=0.8) +
+  labs(title = "Neutral sentiment") 
+
+p_sentneg <- ggplot(data = comment_data_longdiscussions, aes(x = sentiment_prob_neg)) +
+  geom_density(fill="#69b3a2", color="#e9ecef", alpha=0.8) +
+  labs(title = "Negative sentiment") 
+
+library(gridExtra)
+grid.arrange(p_smog, p_lexdiv, p_cosine,
+             p_sentpos, p_sentneu, p_sentneg,
+             nrow = 3)
+
+nrow(comment_data_longdiscussions[comment_data_longdiscussions$sentiment_prob_pos > 0.5,])/nrow(comment_data_longdiscussions)
+hist(comment_data_longdiscussions$sentiment_prob_pos, breaks = 10)
+
+df_class <- data.frame(table(comment_data_longdiscussions$sentiment_class))
+df_class$prop <- df_class$Freq / sum(df_class$Freq)
+
+comment_data_longdiscussions$sentiment_class_c <- ifelse(comment_data_longdiscussions$sentiment_class == "negative", 0,
+                                                         ifelse(comment_data_longdiscussions$sentiment_class == "neutral", 1,
+                                                         ifelse(comment_data_longdiscussions$sentiment_class == "positive", 2, NA)))
+
+
+
+comment_data_longdiscussions$sentiment_class_c[1:100]
+comment_data_longdiscussions$sentiment_class[1:100]
+
+comment_data_longdiscussions$sentiment_class <- c(comment_data_longdiscussions$sentiment_class)
+
+
+# genres
+df_genres <- data.frame(table(comment_data_longdiscussions$genre1)) %>% arrange(desc(Freq))
+df_genres$prop <- df_genres$Freq / sum(df_genres$Freq)
+
+df_genres <- data.frame(table(comment_data_longdiscussions$genre2)) %>% arrange(desc(Freq))
+df_genres$prop <- df_genres$Freq / sum(df_genres$Freq)
+
+data.frame(table(comment_data_longdiscussions$title)) %>% arrange(desc(Freq))
+
+```
+
+
+
+# subset
+```{r}
+
+comment_data_general %>% group_by(article) %>% summarise(comments = n()) %>% arrange(desc(comments))
+
+which(unique(comment_data_general$article) == "/story/2000140091025/thomas-schmid-belastet-kurz-benko-sobotka-und-zahlreiche-weggefaehrten-aus")
+
+
+comment_data_1 <- comment_data_general %>% 
+  filter(article == "/story/2000140091025/thomas-schmid-belastet-kurz-benko-sobotka-und-zahlreiche-weggefaehrten-aus")
+
+head(comment_data_1)
+names(comment_data_1)
+
+nrow(comment_data_1)
+
+```
+
+#0. Format scores
+```{r}
+# offset readability score to make all positive
+if(as.numeric(summary(comment_data_1$SMOG_readability)[1]) < 0){
+  comment_data_1$SMOG_readability_pos <- comment_data_1$SMOG_readability - as.numeric(summary(comment_data_1$SMOG_readability)[1])
+} else {
+  comment_data_1$SMOG_readability_pos <- comment_data_1$SMOG_readability
+}
+# replace NAs with zeros
+comment_data_1$SMOG_readability_pos <- ifelse(is.na(comment_data_1$SMOG_readability_pos)==TRUE, 0, comment_data_1$SMOG_readability_pos)
+
+
+###########
+comment_data_1$cosine_1_pos <- ifelse(is.na(comment_data_1$cosine_1) == TRUE, 0, comment_data_1$cosine_1)
+
+###########
+# offset lexdiv score to make all positive
+if(as.numeric(summary(comment_data_1$lexdiv_cttr)[1]) < 0){
+  comment_data_1$lexdiv_pos <- comment_data_1$lexdiv_cttr - as.numeric(summary(comment_data_1$lexdiv_cttr)[1])
+} else {
+  comment_data_1$lexdiv_pos <- comment_data_1$lexdiv_cttr
+}
+
+# replace NAs with zeros
+comment_data_1$lexdiv_pos <- ifelse(is.na(comment_data_1$lexdiv_pos)==TRUE, 0, comment_data_1$lexdiv_pos)
+
+write.csv(comment_data_1, "comment_data_discussion2000140091025.csv")
+
+```
+
+
+
+#Sorting policies
+
+```{r}
+sorting_policies_fullnames <- c('chronological, replies hidden','pinned, chronological, replies hidden','reverse-chronological, replies hidden','pinned, reverse-chronological, replies hidden','absolute positive, replies hidden','pinned, absolute positive, replies hidden','relative positive, replies hidden','pinned, relative positive, replies hidden','absolute negative, replies hidden','pinned, absolute negative, replies hidden','least absolute negative, replies hidden','pinned, least absolute negative, replies hidden','chronological, reply trees','pinned, chronological, reply trees','reverse-chronological, reply trees','pinned, reverse-chronological, reply trees','absolute positive, reply trees','pinned, absolute positive, reply trees','relative positive, reply trees','pinned, relative positive, reply trees','absolute negative, reply trees','pinned, absolute negative, reply trees','least absolute negative, reply trees','pinned, least absolute negative, reply trees','chronological, replies loose','pinned, chronological, replies loose','reverse-chronological, replies loose','pinned, reverse-chronological, replies loose','absolute positive, replies loose','pinned, absolute positive, replies loose','relative positive, replies loose','pinned, relative positive, replies loose','absolute negative, replies loose','pinned, absolute negative, replies loose','least absolute negative, replies loose','pinned, least absolute negative, replies loose','best possible, replies loose','worst possible, replies loose','baseline'
+)
+
+```
+
+
+# Method: x = number of comments n, y = cumulative values t
+
+### Calculate cumulative sum of all comments
+```{r}
+library(tidyr)
+library(ggplot2)
+
+
+#' For comments of a given article, calculates cumulative feature scores for 
+#' different sorting policies.
+#' 
+#' @param df_sort_list list of dataframes of comments sorted according to 
+#' different sorting policies for a given discussion.
+#' @param score name of feature score to calculate.
+#' @param sorting_policies list of names of sorting policies.
+#' @returns a dataframe of cumulative sum of feature score where rows = comment 
+#' positions, columns = sorting policies.
+cumsum_score <- function(df_sort_list, score, sorting_policies = sorting_policies_list_flat){
+  
+  # create dataframe for given article
+  df_t <- data.frame(n = 1:nrow(df_sort_list[[60]]))
+    
+  # loop through all 54 sorting policies + best and worst = 56 policies
+  for(j in 1:length(df_sort_list)){
+    
+    # get dataframe with sorting
+    i <- df_sort_list[[j]]
+    
+    # CUMULATIVE SCORE
+    score_position <- which(colnames(i) == score)
+    
+    # get cumulative sum 
+    score_cum_sum <- cumsum(i[[score_position]])
+    
+    # interpolate values if replies hidden policy
+    if(nrow(i) < nrow(df_t)){
+      
+      T_sum <- sum(df_sort_list[[60]][[score_position]])
+      t_Nr_p <- score_cum_sum[[nrow(i)]]
+      N <- nrow(df_t)
+      Nr <- nrow(i)
+      
+      i_to_interpolate <- (Nr+1):N
+      t_i_p <- ((T_sum - t_Nr_p)/(N - Nr))*(i_to_interpolate - Nr) + t_Nr_p
+      
+      #merge back together
+      score_cum_sum <- c(score_cum_sum, t_i_p)
+      
+    }
+    
+    # add to dataframe
+    df_t[,j+1] <- score_cum_sum
+
+  }
+  
+  # add baseline policy
+  T_sum <- sum(df_sort_list[[60]][[score_position]])
+  N <- nrow(df_t)
+  
+  score_avg <- rep(T_sum/N, N)
+  score_avg_cumsum <- cumsum(score_avg)
+  
+  # add to dataframe
+  df_t[,64] <- score_avg_cumsum
+  
+  #rename columns
+  colnames(df_t) <- c("n", sorting_policies, "baseline")
+
+  return(df_t)
+}
+
+# test
+df_cumsum_smog <- cumsum_score(df_sort_list, score = "SMOG_readability_pos", sorting_policies_list_flat)
+
+
+
+```
+
+
+###Calculate proportions of distances to best and worst policy
+```{r}
+
+#' For a given article discussion, calculates the average ratio of distances 
+#' between given sorting policies and the worst possible, the best possible and the
+#' random baseline sorting. (="Q")
+#' 
+#' @param df_cumsum_smog_a dataframe of cumulative score sums per policy.
+#' @param cut_off cut-off point defining the top X comments to consider.
+#' @returns A numeric vector containing average Q ratios for all sorting policies.
+get_Q <- function(df_cumsum_smog_a, cut_off = nrow(df_cumsum_smog_a)){
+  
+  # get distances
+  tr <- df_cumsum_smog_a$baseline
+  tb <- df_cumsum_smog_a$best
+  tw <- df_cumsum_smog_a$worst
+  diff_tb_tr <- tb - tr
+  diff_tr_tw <- tr - tw
+  
+  # vector to collect average ratios
+  avg_ratios <- c()
+  
+  # loop through policies p
+  for(i in 2:61){
+    
+    # get difference to baseline
+    diff_tp_tr <- df_cumsum_smog_a[[i]] - tr
+    
+    # get ratios
+    ratios <- ifelse(diff_tp_tr > 0, diff_tp_tr/diff_tb_tr, diff_tp_tr/diff_tr_tw)
+    
+    if(cut_off < nrow(df_cumsum_smog_a)){
+      
+      # use only ratios for 1 to n
+      ratios <- ratios[1:cut_off]
+      
+    } else {
+      
+      # remove last entry (=NaN)
+      ratios <- ratios[1:(length(ratios)-1)]
+    }
+    
+    # get average ratio
+    avg_ratio <- mean(ratios)
+    avg_ratios <- c(avg_ratios, avg_ratio)
+  }
+  
+  return(avg_ratios)
+  
+}
+
+df <- get_Q(df_cumsum_smog_a, 5)
+
+
+```
+
+
+
+#Graphs
+
+##graph function
+```{r, fig.height=5, fig.width=6}
+# SMOG readability sortings for a given article
+prop_SMOG <- function(df_sort_list_flat, sorting_policies = sorting_policies_list_flat){
+  
+  # create dataframe for given article
+  #df_article_scores <- data.frame(sorting_policies = sorting_policies_list_flat, mean_score = vector("numeric", 36))
+  
+  i <- df_sort_list_flat[[36]]
+  
+  prop_disc <- rep(1/nrow(i), nrow(i))
+  cum_sum_prop_disc <- cumsum(prop_disc)
+    
+  
+  df_graph <- data.frame(prop_disc = cum_sum_prop_disc)
+  
+  
+    
+  # loop through all 36 sorting policies
+  for(j in 13:length(df_sort_list_flat)){
+    
+    # get dataframe with sorting
+    i <- df_sort_list_flat[[j]]
+    
+    # PERCENTAGE OF SCORE
+    
+    # offset readability score to make all positive
+    if(as.numeric(summary(i$SMOG_readability)[1]) < 0){
+      i$SMOG_readability_pos <- i$SMOG_readability - as.numeric(summary(i$SMOG_readability)[1])
+    } else {
+      i$SMOG_readability_pos <- i$SMOG_readability
+    }
+    
+    # replace NAs with zeros
+    i$SMOG_readability_pos <- ifelse(is.na(i$SMOG_readability_pos)==TRUE, 0, i$SMOG_readability_pos)
+                                     
+    # calculate proportion of readability score read
+    i$SMOG_prop <- i$SMOG_readability_pos/sum(i$SMOG_readability_pos)
+    
+    # get cumulative sum of proportion
+    cum_sum_prop <- cumsum(i$SMOG_prop)
+    
+    # PERCENTAGE OF DISCUSSION
+    
+    prop_disc <- rep(1/nrow(i), nrow(i))
+    cum_sum_prop_disc <- cumsum(prop_disc)
+    
+    # NORMAL GRAPH
+    df_graph <- cbind(df_graph, cum_sum_prop)
+  
+    
+    # DETRENDED GRAPH
+    
+    #df_graph$prop_score_detrend <- df_graph$prop_score - df_graph$prop_disc
+    
+    #df_article_scores[j,2] <- mean(df_graph$prop_score_detrend)
+
+  }
+  
+  colnames(df_graph) <- c("n_prop", sorting_policies_list_flat[13:36])
+
+  return(df_graph)
+}
+
+df_plot_SMOG <- prop_SMOG(df_sort_list)
+
+df_plot_SMOG_long <- df_plot_SMOG %>% pivot_longer(cols = 2:25, names_to = "policy", values_to = "SMOG_readability")
+
+p <- ggplot(df_plot_SMOG_long, aes(x=n_prop, y = SMOG_readability)) +
+    geom_line(aes(colour = policy), size = 0.8, alpha = 0.5) +
+    labs(title = "Sorting of most readable comments by policy") +
+    theme_minimal() +
+    theme(panel.grid = element_blank(),
+          panel.border = element_rect(color = "black", fill = NA, size = 0.1),
+          legend.position = "none"
+          ) +
+    scale_color_manual(values=user_palette) +
+      xlab("proportion of debate read") +
+    ylab("proportion readability score read") +
+    xlim(0,1) + ylim(0,1)
+  
+print(p)
+
+```
+
+# detrended
+```{r}
+# SMOG readability sortings for a given article
+prop_SMOG_det <- function(df_sort_list_flat, sorting_policies = sorting_policies_list_flat){
+  
+  # create dataframe for given article
+  #df_article_scores <- data.frame(sorting_policies = sorting_policies_list_flat, mean_score = vector("numeric", 36))
+  
+  i <- df_sort_list_flat[[36]]
+  
+  prop_disc <- rep(1/nrow(i), nrow(i))
+  cum_sum_prop_disc <- cumsum(prop_disc)
+    
+  
+  df_graph <- data.frame(prop_disc = cum_sum_prop_disc)
+  
+  
+    
+  # loop through all 36 sorting policies
+  for(j in 13:length(df_sort_list_flat)){
+    
+    # get dataframe with sorting
+    i <- df_sort_list_flat[[j]]
+    
+    # PERCENTAGE OF SCORE
+    
+    # offset readability score to make all positive
+    if(as.numeric(summary(i$SMOG_readability)[1]) < 0){
+      i$SMOG_readability_pos <- i$SMOG_readability - as.numeric(summary(i$SMOG_readability)[1])
+    } else {
+      i$SMOG_readability_pos <- i$SMOG_readability
+    }
+    
+    # replace NAs with zeros
+    i$SMOG_readability_pos <- ifelse(is.na(i$SMOG_readability_pos)==TRUE, 0, i$SMOG_readability_pos)
+                                     
+    # calculate proportion of readability score read
+    i$SMOG_prop <- i$SMOG_readability_pos/sum(i$SMOG_readability_pos)
+    
+    # get cumulative sum of proportion
+    cum_sum_prop <- cumsum(i$SMOG_prop)
+    
+    # PERCENTAGE OF DISCUSSION
+    
+    prop_disc <- rep(1/nrow(i), nrow(i))
+    cum_sum_prop_disc <- cumsum(prop_disc)
+    
+    # NORMAL GRAPH
+    df_graph <- cbind(df_graph, cum_sum_prop)
+  
+    
+    # DETRENDED GRAPH
+    
+    df_graph$prop_score_detrend <- df_graph$prop_score - df_graph$prop_disc
+    
+    #df_article_scores[j,2] <- mean(df_graph$prop_score_detrend)
+
+  }
+  
+  colnames(df_graph) <- c("n_prop", sorting_policies_list_flat[13:36])
+
+  return(df_graph)
+}
+
+df_plot_SMOG_det <- prop_SMOG_det(df_sort_list)
+
+df_plot_SMOG_long$SMOG_readability_detrended <- df_plot_SMOG_long$SMOG_readability - df_plot_SMOG_long$n_prop
+
+user_palette <- rep(c("#004949","#ff6db6","#490092", 
+                      "#6db6ff","#db6d00","#24ff24"), each=4)
+
+p <- ggplot(df_plot_SMOG_long, aes(x=n_prop, y = SMOG_readability_detrended)) +
+    geom_line(aes(colour = policy), size = 0.8, alpha = 0.5) +
+    labs(title = "Sorting of most readable comments by policy") +
+    theme_minimal() +
+    theme(panel.grid = element_blank(),
+          panel.border = element_rect(color = "black", fill = NA, size = 0.1),
+          legend.position = "none"
+          ) +
+    scale_color_manual(values=user_palette) +
+    xlab("proportion of debate read") +
+    ylab("detrended proportion of readability score read") 
+    #xlim(0,1) + ylim(0,1)
+  
+print(p)
+```
+
+
+
+##Plot graphs - 1 discussion
+```{r, fig.height=4, fig.width=6}
+
+replies_palette <- rep(c("#E69F00", "#56B4E9", "#ff6db6"), 12)
+pinned_palette <- rep(c("#E69F00", "#56B4E9"), each = 3, 6)
+user_palette <- rep(c("#004949","#ff6db6","#490092", 
+                      "#6db6ff","#db6d00","#24ff24"), each=6)
+
+
+
+
+c("#004949","#009292","#ff6db6","#ffb6db", "#490092","#006ddb",
+                      "#b66dff","#6db6ff","#b6dbff","#920000","#924900","#db6d00","#24ff24","#ffff6d")
+
+for(i in list(replies_palette, pinned_palette, user_palette)){
+  
+  p <- ggplot(df_plot_SMOG, aes(x=n, y = values)) +
+    geom_line(aes(colour = sorting_policy), size = 0.8, alpha = 0.5) +
+    labs(title = "Sorting of most readable comments by sorting policy") +
+    xlab("number of comments read") +
+    ylab("readability score read") +
+    theme_minimal() +
+    theme(panel.grid = element_blank(),
+          panel.border = element_rect(color = "black", fill = NA, size = 0.1)
+          #,legend.position = "none"
+          ) +
+    scale_color_manual(values=i) +
+    xlim(0,20) + ylim(0,200)
+  
+  print(p)
+  
+}
+
+unique(df_plot_SMOG$sorting_policy)
+
+#OLD:
+
+for(i in 1:3){
+  
+  df_plot <- top_10p_cosine1(df_sort_list[[i]], sorting_policies_list[[i]])
+  p <- ggplot(df_plot, aes(x=n, y = values)) +
+    geom_line(aes(colour = sorting_policy), size = 0.8, alpha = 0.5) +
+    labs(title = "Sorting of most relevant comments by sorting policy", subtitle = "Discussion of article 3177 with 4675 comments, Cosine similarity to article") +
+    xlab("n/N proportion of comments read") +
+    ylab("proportion of overall 10% most relevant comments") +
+    theme_minimal() +
+    theme(panel.grid = element_blank(),
+          panel.border = element_rect(color = "black", fill = NA, size = 0.1)) +
+    xlim(0, 1) + ylim(0, 1)
+  
+  print(p)
+}
+
+for(i in 1:3){
+  df_plot <- top_10p_lexdiv(df_sort_list[[i]], sorting_policies_list[[i]])
+  
+  p <- ggplot(df_plot, aes(x=n_rel, y = values)) +
+    geom_line(aes(colour = sorting_policy), size = 0.8, alpha = 0.5) +
+    labs(title = "Sorting of most lexically diverse comments by sorting policy", subtitle = "Discussion of article 3177 with 4675 comments") +
+    xlab("n/N proportion of comments read") +
+    ylab("proportion of overall 10% most diverse comments") +
+    theme_minimal() +
+    theme(panel.grid = element_blank(),
+          panel.border = element_rect(color = "black", fill = NA, size = 0.1)) +
+    xlim(0, 1) + ylim(0, 1)
+  print(p)
+}
+
+```
+
+##Plot detrended graphs - 1 discussion 
+```{r}
+df_plot_SMOG$values_detrend <- df_plot_SMOG$values - df_plot_SMOG$n
+
+p <- ggplot(df_plot_SMOG, aes(x=n, y = values_detrend)) +
+    geom_line(aes(colour = sorting_policy), size = 0.8, alpha = 0.5) +
+    labs(title = "Sorting of most lexically diverse comments by sorting policy", subtitle = "Discussion of article 3177 with 4675 comments") +
+    xlab("n/N proportion of comments read") +
+    ylab("proportion of most diverse comments - n/N") +
+    theme_minimal() +
+    theme(panel.grid = element_blank(),
+          panel.border = element_rect(color = "black", fill = NA, size = 0.1)) 
+print(p)
+
+```
+
+
+
+#GENERALISED
+
+##0. Format scores
+
+```{r}
+
+format_scores <- function(comment_data_1){
+  
+  # offset readability score to make all positive
+  if(as.numeric(summary(comment_data_1$SMOG_readability)[1]) < 0){
+    comment_data_1$SMOG_readability_pos <- comment_data_1$SMOG_readability - as.numeric(summary(comment_data_1$SMOG_readability)[1])
+  } else {
+    comment_data_1$SMOG_readability_pos <- comment_data_1$SMOG_readability
+  }
+  # replace NAs with zeros
+  comment_data_1$SMOG_readability_pos <- ifelse(is.na(comment_data_1$SMOG_readability_pos)==TRUE, 0, comment_data_1$SMOG_readability_pos)
+  
+  
+  ###########
+  comment_data_1$cosine_1_pos <- ifelse(is.na(comment_data_1$cosine_1) == TRUE, 0, comment_data_1$cosine_1)
+  
+  ###########
+  # offset lexdiv score to make all positive
+  if(as.numeric(summary(comment_data_1$lexdiv_cttr)[1]) < 0){
+    comment_data_1$lexdiv_pos <- comment_data_1$lexdiv_cttr - as.numeric(summary(comment_data_1$lexdiv_cttr)[1])
+  } else {
+    comment_data_1$lexdiv_pos <- comment_data_1$lexdiv_cttr
+  }
+  
+  # replace NAs with zeros
+  comment_data_1$lexdiv_pos <- ifelse(is.na(comment_data_1$lexdiv_pos)==TRUE, 0, comment_data_1$lexdiv_pos)
+  
+  return(comment_data_1)
+  
+}
+
+```
+
+
+
+##Sorting policies 
+
+###I. Replies hidden
+```{r}
+#comment_data_1 <- comment_data_general_subset
+#View(comment_data_1)
+
+
+sort_pols_rh <- function(comment_data_1){
+  # calculates replies-hidden sorting policies for 1 discussion
+  # comment_data_1 is the dataset for 1 discussion
+  # returns df_sort_list_rh
+  
+  # CHRONOLOGICAL
+  # without pinned posts
+  df_sort1 <- comment_data_1 %>% group_by(article) %>% 
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, timestamp_f) # chronological
+  
+  # with pinned posts
+  df_sort2 <- comment_data_1 %>% group_by(article) %>%
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, desc(pinned_f), timestamp_f) # pinned, then chronological
+  
+  # REVERSE CHRONOLOGICAL
+  # without pinned posts
+  df_sort3 <- comment_data_1 %>% group_by(article) %>% 
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, desc(timestamp_f)) # reverse chronological
+  
+  # with pinned posts
+  df_sort4 <- comment_data_1 %>% group_by(article) %>%
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, desc(pinned_f), desc(timestamp_f)) # pinned, then reverse chronological
+  
+  # MOST POSITIVE ABSOLUTE
+  # without pinned posts
+  df_sort5 <- comment_data_1 %>% group_by(article) %>% 
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, desc(votes_pos)) # most positive
+  
+  # with pinned posts
+  df_sort6 <- comment_data_1 %>% group_by(article) %>%
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, desc(pinned_f), desc(votes_pos)) # pinned, then most positive
+  
+  # MOST POSITIVE RELATIVE
+  # without pinned posts
+  df_sort7 <- comment_data_1 %>% group_by(article) %>% 
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, desc(votes_rel)) # most positive
+  
+  # with pinned posts
+  df_sort8 <- comment_data_1 %>% group_by(article) %>%
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, desc(pinned_f), desc(votes_rel)) # pinned, then most positive
+  
+  # MOST NEGATIVE ABSOLUTE
+  # without pinned posts
+  df_sort9 <- comment_data_1 %>% group_by(article) %>% 
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, desc(votes_neg)) # most negative
+  
+  # with pinned posts
+  df_sort10 <- comment_data_1 %>% group_by(article) %>%
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, desc(pinned_f), desc(votes_neg)) # pinned, then most negative
+  
+  # LEAST NEGATIVE ABSOLUTE
+  # without pinned posts
+  df_sort11 <- comment_data_1 %>% group_by(article) %>% 
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, votes_neg) # least negative
+  
+  # with pinned posts
+  df_sort12 <- comment_data_1 %>% group_by(article) %>%
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, desc(pinned_f), votes_neg) # pinned, then least negative
+  
+  # ML-BASED NEGATIVE BINOMIAL - UPVOTES
+  # without pinned posts
+  df_sort13 <- comment_data_1 %>% group_by(article) %>% 
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, desc(up_vote_pred_nb)) 
+  
+  # with pinned posts
+  df_sort14 <- comment_data_1 %>% group_by(article) %>%
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, desc(pinned_f), desc(up_vote_pred_nb)) 
+  
+  
+  # ML-BASED RANDOM FOREST - UPVOTES
+  # without pinned posts
+  df_sort15 <- comment_data_1 %>% group_by(article) %>% 
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, desc(up_vote_pred_rf)) 
+  
+  # with pinned posts
+  df_sort16 <- comment_data_1 %>% group_by(article) %>%
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, desc(pinned_f), desc(up_vote_pred_rf))
+  
+  # ML-BASED LOG REGRESSION - PINS
+  # without pinned posts
+  df_sort17 <- comment_data_1 %>% group_by(article) %>% 
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, desc(pin_pred_lr)) 
+  
+  # with pinned posts
+  df_sort18 <- comment_data_1 %>% group_by(article) %>%
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, desc(pinned_f), desc(pin_pred_lr))
+  
+  
+  # ML-BASED RANDOM FOREST - PINS
+  # without pinned posts
+  df_sort19 <- comment_data_1 %>% group_by(article) %>% 
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, desc(pin_pred_rf))
+  
+  # with pinned posts
+  df_sort20 <- comment_data_1 %>% group_by(article) %>%
+    filter(is_root_comment == 1) %>% # hidden replies
+    arrange(article, desc(pinned_f), desc(pin_pred_rf))
+  
+  
+  
+  df_sort_list_rh <- list(# hidden replies
+                     df_sort1, df_sort2, df_sort3, df_sort4, df_sort5, 
+                     df_sort6, df_sort7, df_sort8, df_sort9, df_sort10, 
+                     df_sort11, df_sort12, df_sort13, df_sort14, df_sort15,
+                     df_sort16, df_sort17, df_sort18, df_sort19, df_sort20)
+  
+  
+  return(df_sort_list_rh)
+}
+
+```
+
+###II. Replies shown in tree
+```{r}
+sort_pols_rt <- function(comment_data_1){
+  # calculates reply-tree sorting policies for 1 discussion
+  # comment_data_1 is the dataset for 1 discussion
+  # returns df_sort_list_rt
+  # arrange only roots chronologically but show replies beneath
+  
+  # get CHRONOLOGICAL order of root posts only
+  root_order <- comment_data_1 %>% filter(is_root_comment==1) %>% arrange(timestamp_f) %>% dplyr::select(root_of_tree)
+  root_order$order_roots <- 1:nrow(root_order)
+  comment_data_2 <- merge(comment_data_1, root_order, by = "root_of_tree", all.x=TRUE, sort = FALSE)
+  
+  # get CHRONOLOGICAL order of root posts only WITH PINNED
+  root_order <- comment_data_1 %>% filter(is_root_comment==1) %>% arrange(desc(pinned_f), timestamp_f) %>% dplyr::select(root_of_tree)
+  root_order$order_roots <- 1:nrow(root_order)
+  comment_data_3 <- merge(comment_data_1, root_order, by = "root_of_tree", all.x=TRUE, sort = FALSE)
+
+  # CHRONOLOGICAL
+  # without pinned posts
+  df_sort21 <- comment_data_2 %>% group_by(article) %>% 
+    arrange(article, order_roots, order) # chronological
+  
+  # with pinned posts
+  df_sort22 <- comment_data_3 %>% group_by(article) %>%
+    arrange(article, order_roots, order) # pinned, then chronological
+  
+  # REVERSE CHRONOLOGICAL
+  # without pinned posts
+  df_sort23 <- comment_data_2 %>% group_by(article) %>%  
+    arrange(article, desc(order_roots), order) # rev chronological
+  
+  # with pinned posts
+  df_sort24 <- comment_data_3 %>% group_by(article) %>%  
+    arrange(article, desc(order_roots), order) # pinned, then rev chronological
+
+  
+  # get VOTES_POS order of root posts only (high to low)
+  root_order <- comment_data_1 %>% filter(is_root_comment==1) %>% arrange(desc(votes_pos)) %>% dplyr::select(root_of_tree)
+  root_order$order_roots <- 1:nrow(root_order)
+  comment_data_4 <- merge(comment_data_1, root_order, by = "root_of_tree", all.x=TRUE, sort = FALSE)
+  
+  # get VOTES_POS order of root posts only WITH PINNED (high to low)
+  root_order <- comment_data_1 %>% filter(is_root_comment==1) %>% arrange(desc(pinned_f), desc(votes_pos)) %>% dplyr::select(root_of_tree)
+  root_order$order_roots <- 1:nrow(root_order)
+  comment_data_5 <- merge(comment_data_1, root_order, by = "root_of_tree", all.x=TRUE, sort = FALSE)
+  
+  # MOST POSITIVE ABSOLUTE
+  # without pinned posts
+  df_sort25 <- comment_data_4 %>% group_by(article) %>% 
+    arrange(article, order_roots, order) # most positive roots
+  
+  # with pinned posts
+  df_sort26 <- comment_data_5 %>% group_by(article) %>%
+    arrange(article, order_roots, order) # pinned, then most positive roots, then replies
+  
+  
+  
+  
+  # get VOTES_REL order of root posts only (high to low)
+  root_order <- comment_data_1 %>% filter(is_root_comment==1) %>% arrange(desc(votes_rel)) %>% dplyr::select(root_of_tree)
+  root_order$order_roots <- 1:nrow(root_order)
+  comment_data_6 <- merge(comment_data_1, root_order, by = "root_of_tree", all.x=TRUE, sort = FALSE)
+  
+  # get VOTES_REL order of root posts only WITH PINNED (high to low)
+  root_order <- comment_data_1 %>% filter(is_root_comment==1) %>% arrange(desc(pinned_f), desc(votes_rel)) %>% dplyr::select(root_of_tree)
+  root_order$order_roots <- 1:nrow(root_order)
+  comment_data_7 <- merge(comment_data_1, root_order, by = "root_of_tree", all.x=TRUE, sort = FALSE)
+  
+  # MOST POSITIVE RELATIVE
+  # without pinned posts
+  df_sort27 <- comment_data_6 %>% group_by(article) %>% 
+    arrange(article, order_roots, order) # most positive
+  
+  # with pinned posts
+  df_sort28 <- comment_data_7 %>% group_by(article) %>%
+    arrange(article, order_roots, order) # pinned, then most positive
+  
+  
+  # get VOTES_NEG order of root posts only (high to low)
+  root_order <- comment_data_1 %>% filter(is_root_comment==1) %>% arrange(desc(votes_neg)) %>% dplyr::select(root_of_tree)
+  root_order$order_roots <- 1:nrow(root_order)
+  comment_data_8 <- merge(comment_data_1, root_order, by = "root_of_tree", all.x=TRUE, sort = FALSE)
+  
+  # get VOTES_NEG order of root posts only WITH PINNED (high to low)
+  root_order <- comment_data_1 %>% filter(is_root_comment==1) %>% arrange(desc(pinned_f), desc(votes_neg)) %>% dplyr::select(root_of_tree)
+  root_order$order_roots <- 1:nrow(root_order)
+  comment_data_9 <- merge(comment_data_1, root_order, by = "root_of_tree", all.x=TRUE, sort = FALSE)
+  
+  # MOST NEGATIVE ABSOLUTE
+  # without pinned posts
+  df_sort29 <- comment_data_8 %>% group_by(article) %>% 
+    arrange(article, order_roots, order) # most negative roots, then replies
+  
+  # with pinned posts
+  df_sort30 <- comment_data_9 %>% group_by(article) %>%
+    arrange(article, order_roots, order) # pinned, then most negative
+  
+  # LEAST NEGATIVE ABSOLUTE
+  # without pinned posts
+  df_sort31 <- comment_data_8 %>% group_by(article) %>% 
+    arrange(article, desc(order_roots), order) # least negative
+  
+  # with pinned posts
+  df_sort32 <- comment_data_9 %>% group_by(article) %>%
+    arrange(article, desc(order_roots), order) # pinned, then least negative
+  
+  # get up_vote_pred_nb order of root posts only (high to low)
+  root_order <- comment_data_1 %>% filter(is_root_comment==1) %>% arrange(desc(up_vote_pred_nb)) %>% dplyr::select(root_of_tree)
+  root_order$order_roots <- 1:nrow(root_order)
+  comment_data_10 <- merge(comment_data_1, root_order, by = "root_of_tree", all.x=TRUE, sort = FALSE)
+  
+  # get up_vote_pred_nb order of root posts only WITH PINNED (high to low)
+  root_order <- comment_data_1 %>% filter(is_root_comment==1) %>% arrange(desc(pinned_f), desc(up_vote_pred_nb)) %>% dplyr::select(root_of_tree)
+  root_order$order_roots <- 1:nrow(root_order)
+  comment_data_11 <- merge(comment_data_1, root_order, by = "root_of_tree", all.x=TRUE, sort = FALSE)
+  
+  # ML-BASED NEGATIVE BINOMIAL
+  # without pinned posts
+  df_sort33 <- comment_data_10 %>% group_by(article) %>% 
+    arrange(article, order_roots, order) # most predicted upvotes roots, then replies
+  
+  # with pinned posts
+  df_sort34 <- comment_data_11 %>% group_by(article) %>%
+    arrange(article, order_roots, order) # pinned, then most predicted upvotes
+  
+  
+  # get up_vote_pred_rf order of root posts only (high to low)
+  root_order <- comment_data_1 %>% filter(is_root_comment==1) %>% arrange(desc(up_vote_pred_rf)) %>% dplyr::select(root_of_tree)
+  root_order$order_roots <- 1:nrow(root_order)
+  comment_data_12 <- merge(comment_data_1, root_order, by = "root_of_tree", all.x=TRUE, sort = FALSE)
+  
+  # get up_vote_pred_rf order of root posts only WITH PINNED (high to low)
+  root_order <- comment_data_1 %>% filter(is_root_comment==1) %>% arrange(desc(pinned_f), desc(up_vote_pred_rf)) %>% dplyr::select(root_of_tree)
+  root_order$order_roots <- 1:nrow(root_order)
+  comment_data_13 <- merge(comment_data_1, root_order, by = "root_of_tree", all.x=TRUE, sort = FALSE)
+  
+  # ML-BASED RANDOM FOREST
+  # without pinned posts
+  df_sort35 <- comment_data_12 %>% group_by(article) %>% 
+    arrange(article, order_roots, order) # most predicted upvotes roots, then replies
+  
+  # with pinned posts
+  df_sort36 <- comment_data_13 %>% group_by(article) %>%
+    arrange(article, order_roots, order) # pinned, then most predicted upvotes
+  
+  # get pin_pred_lr order of root posts only (high to low)
+  root_order <- comment_data_1 %>% filter(is_root_comment==1) %>% arrange(desc(pin_pred_lr)) %>% dplyr::select(root_of_tree)
+  root_order$order_roots <- 1:nrow(root_order)
+  comment_data_14 <- merge(comment_data_1, root_order, by = "root_of_tree", all.x=TRUE, sort = FALSE)
+  
+  # get pin_pred_lr order of root posts only WITH PINNED (high to low) 
+  root_order <- comment_data_1 %>% filter(is_root_comment==1) %>% arrange(desc(pinned_f), desc(pin_pred_lr)) %>% dplyr::select(root_of_tree)
+  root_order$order_roots <- 1:nrow(root_order)
+  comment_data_15 <- merge(comment_data_1, root_order, by = "root_of_tree", all.x=TRUE, sort = FALSE)
+  
+  # ML-BASED LOG REGRESSION - PIN
+  # without pinned posts
+  df_sort37 <- comment_data_14 %>% group_by(article) %>% 
+    arrange(article, order_roots, order) # most predicted pin roots
+  
+  # with pinned posts
+  df_sort38 <- comment_data_15 %>% group_by(article) %>%
+    arrange(article, order_roots, order) # pinned, then most predicted pins
+  
+  # get pin_pred_rf order of root posts only (high to low)
+  root_order <- comment_data_1 %>% filter(is_root_comment==1) %>% arrange(desc(pin_pred_rf)) %>% dplyr::select(root_of_tree)
+  root_order$order_roots <- 1:nrow(root_order)
+  comment_data_16 <- merge(comment_data_1, root_order, by = "root_of_tree", all.x=TRUE, sort = FALSE)
+  
+  # get pin_pred_rf order of root posts only, WITH PINNED (high to low)
+  root_order <- comment_data_1 %>% filter(is_root_comment==1) %>% arrange(desc(pinned_f), desc(pin_pred_rf)) %>% dplyr::select(root_of_tree)
+  root_order$order_roots <- 1:nrow(root_order)
+  comment_data_17 <- merge(comment_data_1, root_order, by = "root_of_tree", all.x=TRUE, sort = FALSE)
+  
+  # ML-BASED RANDOM FOREST - PIN
+  # without pinned posts
+  df_sort39 <- comment_data_16 %>% group_by(article) %>% 
+    arrange(article, order_roots, order) # most predicted pin roots
+  
+  # with pinned posts
+  df_sort40 <- comment_data_17 %>% group_by(article) %>% 
+    arrange(article, order_roots, order) # Pinned, most predicted pin roots
+  
+  
+  df_sort_list_rt <- list( # reply trees
+                     df_sort21, df_sort22, df_sort23, df_sort24, df_sort25,
+                     df_sort26, df_sort27, df_sort28, df_sort29, df_sort30, 
+                     df_sort31, df_sort32, df_sort33, df_sort34, df_sort35, 
+                     df_sort36, df_sort37, df_sort38, df_sort39, df_sort40)
+  
+  return(df_sort_list_rt)
+}
+
+
+
+```
+
+
+###III. Replies separately
+```{r}
+
+sort_pols_rl <- function(comment_data_1){
+  # calculates sorting policies with loose replies for 1 discussion
+  # comment_data_1 is the dataset for 1 discussion
+  # returns df_sort_list_rl
+
+  # CHRONOLOGICAL
+  # without pinned posts
+  df_sort41 <- comment_data_1 %>% group_by(article) %>% 
+    arrange(article, timestamp_f) # chronological
+  
+  # with pinned posts
+  df_sort42 <- comment_data_1 %>% group_by(article) %>%
+    arrange(article, desc(pinned_f), timestamp_f) # pinned, then chronological
+  
+  # REVERSE CHRONOLOGICAL
+  # without pinned posts
+  df_sort43 <- comment_data_1 %>% group_by(article) %>% 
+    arrange(article, desc(timestamp_f)) # reverse chronological
+  
+  # with pinned posts
+  df_sort44 <- comment_data_1 %>% group_by(article) %>%
+    arrange(article, desc(pinned_f), desc(timestamp_f)) # pinned, then reverse chronological
+  
+  # MOST POSITIVE ABSOLUTE
+  # without pinned posts
+  df_sort45 <- comment_data_1 %>% group_by(article) %>% 
+    arrange(article, desc(votes_pos)) # most positive
+  
+  # with pinned posts
+  df_sort46 <- comment_data_1 %>% group_by(article) %>%
+    arrange(article, desc(pinned_f), desc(votes_pos)) # pinned, then most positive
+  
+  # MOST POSITIVE RELATIVE
+  # without pinned posts
+  df_sort47 <- comment_data_1 %>% group_by(article) %>% 
+    arrange(article, desc(votes_rel)) # most positive
+  
+  # with pinned posts
+  df_sort48 <- comment_data_1 %>% group_by(article) %>%
+    arrange(article, desc(pinned_f), desc(votes_rel)) # pinned, then most positive
+  
+  # MOST NEGATIVE ABSOLUTE
+  # without pinned posts
+  df_sort49 <- comment_data_1 %>% group_by(article) %>% 
+    arrange(article, desc(votes_neg)) # most negative
+  
+  # with pinned posts
+  df_sort50 <- comment_data_1 %>% group_by(article) %>%
+    arrange(article, desc(pinned_f), desc(votes_neg)) # pinned, then most negative
+  
+  # LEAST NEGATIVE ABSOLUTE
+  # without pinned posts
+  df_sort51 <- comment_data_1 %>% group_by(article) %>% 
+    arrange(article, votes_neg) # least negative
+  
+  # with pinned posts
+  df_sort52 <- comment_data_1 %>% group_by(article) %>%
+    arrange(article, desc(pinned_f), votes_neg) # pinned, then least negative
+  
+  
+  # ML-BASED NEGATIVE BINOMIAL
+  # without pinned posts
+  df_sort53 <- comment_data_1 %>% group_by(article) %>% 
+    arrange(article, desc(up_vote_pred_nb)) 
+  
+  # with pinned posts
+  df_sort54 <- comment_data_1 %>% group_by(article) %>%
+    arrange(article, desc(pinned_f), desc(up_vote_pred_nb))
+  
+  # ML-BASED RANDOM FOREST
+  # without pinned posts
+  df_sort55 <- comment_data_1 %>% group_by(article) %>% 
+    arrange(article, desc(up_vote_pred_rf)) 
+  
+  # with pinned posts
+  df_sort56 <- comment_data_1 %>% group_by(article) %>%
+    arrange(article, desc(pinned_f), desc(up_vote_pred_rf))
+  
+  # ML-BASED LOG REG - PINS
+  # without pinned posts
+  df_sort57 <- comment_data_1 %>% group_by(article) %>% 
+    arrange(article, desc(pin_pred_lr)) 
+  
+  # with pinned posts
+  df_sort58 <- comment_data_1 %>% group_by(article) %>% 
+    arrange(article, desc(pinned_f), desc(pin_pred_lr)) 
+  
+  # ML-BASED RANDOM FOREST - PINS
+  # without pinned posts
+  df_sort59 <- comment_data_1 %>% group_by(article) %>%
+    arrange(article, desc(pin_pred_rf))
+  
+  # with pinned posts
+  df_sort60 <- comment_data_1 %>% group_by(article) %>%
+    arrange(article, desc(pinned_f), desc(pin_pred_rf))
+  
+  
+  df_sort_list_rl <- list( # replies loose
+                     df_sort41, df_sort42, df_sort43, df_sort44, df_sort45,
+                     df_sort46, df_sort47, df_sort48, df_sort49, df_sort50,
+                     df_sort51, df_sort52, df_sort53, df_sort54, df_sort55,
+                     df_sort56, df_sort57, df_sort58, df_sort59, df_sort60
+                     )
+  
+  return(df_sort_list_rl)
+}
+
+```
+
+###IV. Best and worst policies
+```{r}
+# calculates best, worst, and baseline sorting policies for 1 discussion
+  # comment_data_1 is the dataset for 1 discussion
+  # returns df_sort_list_bl
+
+sort_pols_bw_SMOG <- function(comment_data_1){
+
+  # BEST
+  df_sort_best <- comment_data_1 %>% group_by(article) %>% 
+    arrange(article, desc(SMOG_readability_pos))
+
+  # WORST
+  df_sort_worst <- comment_data_1 %>% group_by(article) %>% 
+    arrange(article, SMOG_readability_pos)
+  
+  df_sort_list_bw <- list(df_sort_best, df_sort_worst)
+  
+  return(df_sort_list_bw)
+}
+
+sort_pols_bw_lexdiv <- function(comment_data_1){
+
+  # BEST
+  df_sort_best <- comment_data_1 %>% group_by(article) %>% 
+    arrange(article, desc(lexdiv_pos))
+
+  # WORST
+  df_sort_worst <- comment_data_1 %>% group_by(article) %>% 
+    arrange(article, lexdiv_pos)
+  
+  df_sort_list_bw <- list(df_sort_best, df_sort_worst)
+  
+  return(df_sort_list_bw)
+}
+
+sort_pols_bw_cosine <- function(comment_data_1){
+
+  # BEST
+  df_sort_best <- comment_data_1 %>% group_by(article) %>% 
+    arrange(article, desc(cosine_1_pos))
+
+  # WORST
+  df_sort_worst <- comment_data_1 %>% group_by(article) %>% 
+    arrange(article, cosine_1_pos)
+  
+  df_sort_list_bw <- list(df_sort_best, df_sort_worst)
+  
+  return(df_sort_list_bw)
+}
+
+sort_pols_bw_sentclass <- function(comment_data_1){
+
+  # BEST
+  df_sort_best <- comment_data_1 %>% group_by(article) %>% 
+    arrange(article, desc(sentiment_class_c))
+
+  # WORST
+  df_sort_worst <- comment_data_1 %>% group_by(article) %>% 
+    arrange(article, sentiment_class_c)
+  
+  df_sort_list_bw <- list(df_sort_best, df_sort_worst)
+  
+  return(df_sort_list_bw)
+}
+
+
+  
+```
+
+
+
+###Sum up sorting policies
+```{r}
+sorting_policies <- c("chron", "chron_pinned", 
+                      "rev-chron", "rev-chron_pinned", 
+                      "pos-abs", "pos-abs_pinned", 
+                      "pos-rel", "pos-rel_pinned",  
+                      "neg-abs", "neg-abs_pinned",  
+                      "least-neg-abs", "least-neg-abs_pinned", 
+                      "pred-nb", "pred-nb_pinned",
+                      "pred-rf", "pred-rf_pinned", 
+                      "pin-pred-lr", "pin-pred-lr_pinned",
+                      "pin-pred-rf", "pin-pred-rf_pinned")
+
+sorting_policies_rh <- paste0(sorting_policies, "_", "rh")
+sorting_policies_rt <- paste0(sorting_policies, "_", "rt")
+sorting_policies_rl <- paste0(sorting_policies, "_", "rl")
+
+sorting_policies_list <- c(sorting_policies_rh, sorting_policies_rt, sorting_policies_rl, "best", "worst")
+# unlist sorting policies list
+sorting_policies_list_flat <- unlist(sorting_policies_list)
+
+length(sorting_policies_list_flat)
+
+sorting_policies_fullnames <- c('chronological, replies hidden','pinned, chronological, replies hidden',
+                                'reverse-chronological, replies hidden','pinned, reverse-chronological, replies hidden',
+                                'absolute positive, replies hidden','pinned, absolute positive, replies hidden',
+                                'relative positive, replies hidden','pinned, relative positive, replies hidden',
+                                'absolute negative, replies hidden','pinned, absolute negative, replies hidden',
+                                'least absolute negative, replies hidden','pinned, least absolute negative, replies hidden',
+                                'reg-predicted upvotes, replies hidden', 'pinned, reg-predicted upvotes, replies hidden',
+                                'ML-predicted upvotes, replies hidden', 'pinned, ML-predicted upvotes, replies hidden',
+                                'reg-predicted pins, replies hidden', 'pinned, reg-predicted pins, replies hidden',
+                                'ML-predicted pins, replies hidden', 'pinned, ML-predicted pins, replies hidden',
+                                
+                                'chronological, reply trees','pinned, chronological, reply trees',
+                                'reverse-chronological, reply trees','pinned, reverse-chronological, reply trees',
+                                'absolute positive, reply trees','pinned, absolute positive, reply trees',
+                                'relative positive, reply trees','pinned, relative positive, reply trees',
+                                'absolute negative, reply trees','pinned, absolute negative, reply trees',
+                                'least absolute negative, reply trees','pinned, least absolute negative, reply trees',
+                                'reg-predicted upvotes, reply trees', 'pinned, reg-predicted upvotes, reply trees',
+                                'ML-predicted upvotes, reply trees', 'pinned, ML-predicted upvotes, reply trees',
+                                'reg-predicted pins, reply trees', 'pinned, reg-predicted pins, reply trees',
+                                'ML-predicted pins, reply trees', 'pinned, ML-predicted pins, reply trees', 
+                                
+                                'chronological, replies loose','pinned, chronological, replies loose',
+                                'reverse-chronological, replies loose','pinned, reverse-chronological, replies loose',
+                                'absolute positive, replies loose','pinned, absolute positive, replies loose',
+                                'relative positive, replies loose','pinned, relative positive, replies loose',
+                                'absolute negative, replies loose','pinned, absolute negative, replies loose',
+                                'least absolute negative, replies loose','pinned, least absolute negative, replies loose',
+                                'reg-predicted upvotes, replies loose', 'pinned, reg-predicted upvotes, replies loose',
+                                'ML-predicted upvotes, replies loose', 'pinned, ML-predicted upvotes, replies loose',
+                                'reg-predicted pins, replies loose', 'pinned, reg-predicted pins, replies loose',
+                                'ML-predicted pins, replies loose', 'pinned, ML-predicted pins, replies loose',
+                                
+                                'best possible, replies loose','worst possible, replies loose',
+                                'baseline'
+)
+
+length(sorting_policies_fullnames)
+
+```
+
+
+
+##Sorting Values
+
+#Average over all articles - x = number of articles, y = cumsum, then ratios Q
+```{r}
+
+# create lists to store dataframes of each policy and discussion, by each different n
+df_smog_list <- list(data.frame(matrix(nrow = 0, ncol = 60)), data.frame(matrix(nrow = 0, ncol = 60)), 
+                     data.frame(matrix(nrow = 0, ncol = 60)), data.frame(matrix(nrow = 0, ncol = 60)))
+
+df_lexdiv_list <- list(data.frame(matrix(nrow = 0, ncol = 60)), data.frame(matrix(nrow = 0, ncol = 60)),
+                       data.frame(matrix(nrow = 0, ncol = 60)), data.frame(matrix(nrow = 0, ncol = 60)))
+
+df_sim_list <- list(data.frame(matrix(nrow = 0, ncol = 60)), data.frame(matrix(nrow = 0, ncol = 60)), 
+                     data.frame(matrix(nrow = 0, ncol = 60)), data.frame(matrix(nrow = 0, ncol = 60)))
+
+df_sentclass_list <- list(data.frame(matrix(nrow = 0, ncol = 60)), data.frame(matrix(nrow = 0, ncol = 60)),
+                        data.frame(matrix(nrow = 0, ncol = 60)), data.frame(matrix(nrow = 0, ncol = 60)))
+
+# score list
+score_list <- list("SMOG_readability_pos", "lexdiv_pos", "cosine_1_pos", 
+                     "sentiment_class_c")
+
+
+
+library(dplyr)
+# see how many articles have less than x comments
+comments_count <- comment_data_general %>% group_by(article) %>% count()
+x <- 100
+100*sum(comments_count$n > x)/nrow(comments_count) # proportion of articles with at least n comments
+100*sum(comments_count$n[comments_count$n > x])/sum(comments_count$n) # proportion of comments where n > n
+
+# exclude all articles with less than 100 comments
+long_discussions <- comments_count$article[comments_count$n > 100]
+length(long_discussions)
+
+for(a in long_discussions){
+  
+  #a <- long_discussions[[1]] # to test
+  
+  print(which(long_discussions == a))
+  
+  # get subset dataframe
+  comment_data_a <- comment_data_general[which(comment_data_general$article == a),]
+  
+  # get ns
+  n_list <- list(10,50,100,nrow(comment_data_a))
+  
+  # format scores
+  comment_data_a <- format_scores(comment_data_a)
+  
+  # sort 48 ways
+  df_sort_list_rh <- sort_pols_rh(comment_data_a) # only root comments
+  df_sort_list_rt <- sort_pols_rt(comment_data_a) # all comments
+  df_sort_list_rl <- sort_pols_rl(comment_data_a) # all comments
+  
+  # 1. SMOG
+  df_sort_list_bw <- sort_pols_bw_SMOG(comment_data_a)
+  df_sort_list <- c(df_sort_list_rh, df_sort_list_rt, df_sort_list_rl, df_sort_list_bw) # add to sorting 
+  df_t <- cumsum_score(df_sort_list, score = score_list[[1]], sorting_policies_list_flat) # cumulative sum of score
+  for(i in 1:4){ # for each n, get Qs and collect in df_smog_list
+    avg_ratios <- get_Q(df_t, cut_off = n_list[[i]])
+    df_smog_list[[i]] <- rbind(df_smog_list[[i]], avg_ratios)
+  }
+  
+  # 2. Lexdiv
+  df_sort_list_bw <- sort_pols_bw_lexdiv(comment_data_a)
+  df_sort_list <- c(df_sort_list_rh, df_sort_list_rt, df_sort_list_rl, df_sort_list_bw)
+  df_t <- cumsum_score(df_sort_list, score = score_list[[2]], sorting_policies_list_flat) # cumulative sum of score
+  for(i in 1:4){ # for each n, get Qs and collect in df_lexdiv_list
+    avg_ratios <- get_Q(df_t, cut_off = n_list[[i]])
+    df_lexdiv_list[[i]] <- rbind(df_lexdiv_list[[i]], avg_ratios)
+  }
+  
+  # 3. Similarity
+  df_sort_list_bw <- sort_pols_bw_cosine(comment_data_a)
+  df_sort_list <- c(df_sort_list_rh, df_sort_list_rt, df_sort_list_rl, df_sort_list_bw)
+  df_t <- cumsum_score(df_sort_list, score = score_list[[3]], sorting_policies_list_flat) # cumulative sum of score
+  for(i in 1:4){ # for each n, get Qs 
+    avg_ratios <- get_Q(df_t, cut_off = n_list[[i]])
+    df_sim_list[[i]] <- rbind(df_sim_list[[i]], avg_ratios)
+  }
+  
+  # 4. Sentiment class
+  df_sort_list_bw <- sort_pols_bw_sentclass(comment_data_a)
+  df_sort_list <- c(df_sort_list_rh, df_sort_list_rt, df_sort_list_rl, df_sort_list_bw)
+  df_t <- cumsum_score(df_sort_list, score = score_list[[4]], sorting_policies_list_flat) # cumulative sum of score
+  for(i in 1:4){ # for each n, get Qs 
+    avg_ratios <- get_Q(df_t, cut_off = n_list[[i]])
+    df_sentclass_list[[i]] <- rbind(df_sentclass_list[[i]], avg_ratios)
+  }
+  
+  #######################
+  
+  
+}
+
+# column names
+for(i in 1:4){
+  colnames(df_smog_list[[i]]) <- sorting_policies_list_flat[1:60]
+  colnames(df_lexdiv_list[[i]]) <- sorting_policies_list_flat[1:60]
+  colnames(df_sim_list[[i]]) <- sorting_policies_list_flat[1:60]
+  colnames(df_sentclass_list[[i]]) <- sorting_policies_list_flat[1:60]
+}
+
+length(long_discussions)
+
+tail(df_sentclass_list[[1]])
+
+```
+
+
+
+###Export
+```{r}
+# all 60 policies
+names_all <- c("df_smog_list", "df_lexdiv_list", "df_sim_list", 
+               "df_sentclass_list")
+dfs_list <- list(df_smog_list, df_lexdiv_list, df_sim_list, 
+               df_sentclass_list)
+
+for(n in 1:4){ #loop through ns
+  print(paste0("n: ", n))
+  
+  for(i in 1:4){ # loop through feature scores
+    
+    print(i)
+    data_to_export <- dfs_list[[i]][[n]]
+    write.csv(data_to_export, paste0(names_all[[i]], "_", n, ".csv"))
+    }
+  
+}
+
+dfs_list[[1]]
+
+length(dfs_list)
+
+df_smog_list
+```
+
+
+
+##Avg by category
+```{r}
+# get policy category names
+policy_categories <- data.frame(user_based = unlist(lapply(sorting_policies_list_flat[1:60], function(x) strsplit(x,"_")[[1]][1])),
+                                  editor_based = ifelse(grepl("pinned",sorting_policies_list_flat[1:60]) == TRUE, "pinned", "not_pinned"),
+                                  structure_based = unlist(lapply(sorting_policies_list_flat[1:60], 
+                                                                  function(x) substr(x, nchar(x)-1, nchar(x)))))
+
+
+#1. SUM UP POLICY COLUMNS
+
+# user-based:
+get_avg_user_df <- function(df_x){
+  
+  df_avg_user <- data.frame(matrix(nrow = 2615, ncol = 0)) 
+  
+  # loop through 10 different policies
+  for(i in seq(1,20,2)){ # 10 different policies: 1 1 2 2 3 3 4 4 5 5 6 6 7 7 8 8 9 9 10 10, repeated 3 times for each policy
+    
+      avg_column <- rowMeans(df_x[,
+                                c(i, i+1,
+                                  i+20, i+21,
+                                  i+40, i+41)])
+    
+    df_avg_user <- cbind(df_avg_user, avg_column)
+  }
+  
+  colnames(df_avg_user) <- unique(policy_categories$user_based)
+  
+  return(df_avg_user)
+}
+
+policy_categories$editor_based
+
+
+# editor-based:
+get_avg_editor_df <- function(df_x){
+  
+  df_avg_editor <- data.frame(matrix(nrow = 2615, ncol = 0))
+  
+  editor_seq <- ifelse(grepl("pinned",sorting_policies_list_flat[1:60]) == FALSE, 1, 2) # assign 1 to not pinned
+  
+  # loop through 2 different policies
+  for(i in 1:2){
+    
+    col_index <- which(editor_seq == i) # get columns for policies according to category 1 or 2 
+    
+    avg_column <- rowMeans(df_x[,col_index]) # take mean
+    
+    df_avg_editor <- cbind(df_avg_editor, avg_column) # add to dataframe
+  }
+  
+  colnames(df_avg_editor) <- unique(policy_categories$editor_based) 
+  
+  return(df_avg_editor)
+}
+
+
+# structure-based:
+get_avg_structure_df <- function(df_x){
+  
+  df_avg_structure <- data.frame(matrix(nrow = 2615, ncol = 0)) 
+  
+  # loop through 3 different policies
+  for(i in seq(1,60,20)){ 
+    
+    col_index <- i:(i+19)
+    
+    avg_column <- rowMeans(df_x[,col_index])
+    
+    df_avg_structure <- cbind(df_avg_structure, avg_column)
+  }
+  
+  colnames(df_avg_structure) <- c("replies hidden", "reply trees", "replies loose")  #unique(policy_categories$structure_based)
+  
+  return(df_avg_structure)
+}
+
+
+# USER BASED
+user_based_avg_smog <- list()
+user_based_avg_lexdiv <- list()
+user_based_avg_sim <- list()
+user_based_avg_sentclass <- list()
+for(i in 1:4){
+  print(i)
+  user_based_avg_smog[[i]] <- get_avg_user_df(df_smog_list[[i]])
+  user_based_avg_lexdiv[[i]] <- get_avg_user_df(df_lexdiv_list[[i]])
+  user_based_avg_sim[[i]] <- get_avg_user_df(df_sim_list[[i]])
+  user_based_avg_sentclass[[i]] <- get_avg_user_df(df_sentclass_list[[i]])
+}
+
+
+# EDITOR BASED
+editor_based_avg_smog <- list()
+editor_based_avg_lexdiv <- list()
+editor_based_avg_sim <- list()
+editor_based_avg_sentclass <- list()
+for(i in 1:4){
+  print(i)
+  editor_based_avg_smog[[i]] <- get_avg_editor_df(df_smog_list[[i]])
+  editor_based_avg_lexdiv[[i]] <- get_avg_editor_df(df_lexdiv_list[[i]])
+  editor_based_avg_sim[[i]] <- get_avg_editor_df(df_sim_list[[i]])
+  editor_based_avg_sentclass[[i]] <- get_avg_editor_df(df_sentclass_list[[i]])
+}
+
+
+# STRUCTURE BASED
+structure_based_avg_smog <- list()
+structure_based_avg_lexdiv <- list()
+structure_based_avg_sim <- list()
+structure_based_avg_sentclass <- list()
+for(i in 1:4){
+  print(i)
+  structure_based_avg_smog[[i]] <- get_avg_structure_df(df_smog_list[[i]])
+  structure_based_avg_lexdiv[[i]] <- get_avg_structure_df(df_lexdiv_list[[i]])
+  structure_based_avg_sim[[i]] <- get_avg_structure_df(df_sim_list[[i]])
+  structure_based_avg_sentclass[[i]] <- get_avg_structure_df(df_sentclass_list[[i]])
+}
+
+
+
+# 2. GET MEAN AND SD 
+
+n_list <- c("10", "50", "100", "N")
+scores <- c("Readability", "LexicalDiversity", "Relevance", "SentimentScore")
+
+# User-based -----
+df_Q_user <- data.frame(matrix(nrow = 10, ncol = 0))
+df_Q_user$policies <- unique(colnames(user_based_avg_smog[[1]]))
+avg_dfs_list_user <- list(user_based_avg_smog, user_based_avg_lexdiv, user_based_avg_sim,
+                     user_based_avg_sentclass)
+
+for(j in 1:4){ # loop through Qs of different scores
+  
+  for(i in 1:4){ # loop through Ns
+  
+    df_Q_user <- cbind(df_Q_user, readability = paste0(round(colMeans(avg_dfs_list_user[[j]][[i]]), 4), 
+                                               " (", round(sapply(avg_dfs_list_user[[j]][[i]], sd), 4), ")"))
+    
+    column_name <- paste0(scores[[j]], "_", n_list[[i]])
+    print(column_name)
+    names(df_Q_user)[ncol(df_Q_user)] <- column_name
+  }
+}
+# transpose
+policy_names <- df_Q_user$policies
+df_Q_user <- as.data.frame(t(df_Q_user[,-1]))
+colnames(df_Q_user) <- policy_names
+
+#export as csv
+write.csv(df_Q_user, "df_Q_user.csv")
+
+library(gridExtra)
+png("df_Q_user.png", height = 30*nrow(df_Q_user), width = 200*ncol(df_Q_user))
+grid.table(df_Q_user)
+dev.off()
+
+
+# Editor-based -----
+df_Q_editor <- data.frame(matrix(nrow = 2, ncol = 0))
+df_Q_editor$policies <- unique(colnames(editor_based_avg_smog[[1]]))
+avg_dfs_list_editor <- list(editor_based_avg_smog, editor_based_avg_lexdiv, editor_based_avg_sim,
+                     editor_based_avg_sentclass)
+
+for(j in 1:4){ # loop through Qs of different scores
+  
+  for(i in 1:4){ # loop through Ns
+  
+    df_Q_editor <- cbind(df_Q_editor, readability = paste0(round(colMeans(avg_dfs_list_editor[[j]][[i]]), 4), 
+                                               " (", round(sapply(avg_dfs_list_editor[[j]][[i]], sd), 4), ")"))
+    
+    column_name <- paste0(scores[[j]], "_", n_list[[i]])
+    print(column_name)
+    names(df_Q_editor)[ncol(df_Q_editor)] <- column_name
+  }
+}
+# transpose
+policy_names <- df_Q_editor$policies
+df_Q_editor <- as.data.frame(t(df_Q_editor[,-1]))
+colnames(df_Q_editor) <- policy_names
+
+#export as csv
+write.csv(df_Q_editor, "df_Q_editor.csv")
+
+library(gridExtra)
+png("df_Q_editor.png", height = 30*nrow(df_Q_editor), width = 200*ncol(df_Q_editor))
+grid.table(df_Q_editor)
+dev.off()
+
+
+# Structure-based -----
+df_Q_structure <- data.frame(matrix(nrow = 3, ncol = 0))
+df_Q_structure$policies <- unique(colnames(structure_based_avg_smog[[1]]))
+avg_dfs_list_structure <- list(structure_based_avg_smog, structure_based_avg_lexdiv, structure_based_avg_sim,
+                     structure_based_avg_sentclass)
+
+for(j in 1:4){ # loop through Qs of different scores
+  
+  for(i in 1:4){ # loop through Ns
+  
+    df_Q_structure <- cbind(df_Q_structure, readability = paste0(round(colMeans(avg_dfs_list_structure[[j]][[i]]), 4), 
+                                               " (", round(sapply(avg_dfs_list_structure[[j]][[i]], sd), 4), ")"))
+    
+    column_name <- paste0(scores[[j]], "_", n_list[[i]])
+    print(column_name)
+    names(df_Q_structure)[ncol(df_Q_structure)] <- column_name
+    
+  }
+  
+}
+
+# transpose
+policy_names <- df_Q_structure$policies
+df_Q_structure <- as.data.frame(t(df_Q_structure[,-1]))
+colnames(df_Q_structure) <- policy_names
+
+#export as csv
+write.csv(df_Q_structure, "df_Q_structure.csv")
+
+library(gridExtra)
+png("df_Q_structure.png", height = 30*nrow(df_Q_structure), width = 200*ncol(df_Q_structure))
+grid.table(df_Q_structure)
+dev.off()
+
+```
+
+
+
+### Export averages by sorting category
+```{r}
+names_user <- c("user_based_avg_smog", "user_based_avg_lexdiv", "user_based_avg_sim",
+                     "user_based_avg_sentclass")
+
+for(i in 1:4){
+  
+  data_to_export <- avg_dfs_list_user[[i]][[1]]
+  write.csv(data_to_export, paste0(names_user[[i]], ".csv"))
+  
+}
+
+names_editor <- c("editor_based_avg_smog", "editor_based_avg_lexdiv", "editor_based_avg_sim",
+                     "editor_based_avg_sentclass")
+
+for(i in 1:4){
+  
+  data_to_export <- avg_dfs_list_editor[[i]][[1]]
+  write.csv(data_to_export, paste0(names_editor[[i]], ".csv"))
+  
+}
+
+
+names_structure <- c("structure_based_avg_smog", "structure_based_avg_lexdiv",
+                     "structure_based_avg_sim", "structure_based_avg_sentpos",
+                     "structure_based_avg_sentclass")
+
+for(i in 1:4){
+  
+  data_to_export <- avg_dfs_list_structure[[i]][[1]]
+  write.csv(data_to_export, paste0(names_structure[[i]], ".csv"))
+  
+}
+
+```
+
+
+
+##Distribution graphs
+```{r, fig.width=10, fig.height=10}
+
+# adjust dataframe
+x <- 1
+## User-based
+df_smog_long <- user_based_avg_smog[[x]] %>% pivot_longer(1:10, names_to = "policies", values_to = "Q")
+df_lexdiv_long <- user_based_avg_lexdiv[[x]] %>% pivot_longer(1:10, names_to = "policies", values_to = "Q")
+df_sim_long <- user_based_avg_sim[[x]] %>% pivot_longer(1:10, names_to = "policies", values_to = "Q")
+df_sentclass_long <- user_based_avg_sentclass[[x]] %>% pivot_longer(1:10, names_to = "policies", values_to = "Q")
+
+
+## editor-based
+# df_smog_long <- editor_based_avg_smog[[x]] %>% pivot_longer(1:2, names_to = "policies", values_to = "Q")
+# df_lexdiv_long <- editor_based_avg_lexdiv[[x]] %>% pivot_longer(1:2, names_to = "policies", values_to = "Q")
+# df_sim_long <- editor_based_avg_sim[[x]] %>% pivot_longer(1:2, names_to = "policies", values_to = "Q")
+# df_sentclass_long <- editor_based_avg_sentclass[[x]] %>% pivot_longer(1:2, names_to = "policies", values_to = "Q")
+
+
+##structure-based
+# df_smog_long <- structure_based_avg_smog[[x]] %>% pivot_longer(1:3, names_to = "policies", values_to = "Q")
+# df_lexdiv_long <- structure_based_avg_lexdiv[[x]] %>% pivot_longer(1:3, names_to = "policies", values_to = "Q")
+# df_sim_long <- structure_based_avg_sim[[x]] %>% pivot_longer(1:3, names_to = "policies", values_to = "Q")
+# df_sentclass_long <- structure_based_avg_sentclass[[x]] %>% pivot_longer(1:3, names_to = "policies", values_to = "Q")
+
+
+
+# library
+library(ggridges)
+library(ggplot2)
+library(viridis)
+library(hrbrthemes)
+
+# Plot
+p_ridge_smog <- ggplot(df_smog_long, aes(x = Q, y = policies, fill = ..x..)) +
+  geom_density_ridges_gradient(scale = 3, rel_min_height = 0.01) +
+  scale_fill_viridis(option = "C") +
+  labs(title = 'Readability score', subtitle = "Performance Q by sorting policy") +
+  theme_ipsum() +
+    theme(
+      legend.position="none",
+      panel.spacing = unit(0.1, "lines"),
+      strip.text.x = element_text(size = 8),
+      plot.title = element_text(size = 12)
+    ) +
+  xlim(-1.1, 1.1)
+
+p_ridge_lexdiv <- ggplot(df_lexdiv_long, aes(x = Q, y = policies, fill = ..x..)) +
+  geom_density_ridges_gradient(scale = 3, rel_min_height = 0.01) +
+  scale_fill_viridis(option = "C") +
+  labs(title = 'Lexical diversity', subtitle = "Performance Q by sorting policy") +
+  theme_ipsum() +
+    theme(
+      legend.position="none",
+      panel.spacing = unit(0.1, "lines"),
+      strip.text.x = element_text(size = 8),
+      plot.title = element_text(size = 12)
+    )+
+  xlim(-1.1, 1.1)
+
+p_ridge_cosine <- ggplot(df_sim_long, aes(x = Q, y = policies, fill = ..x..)) +
+  geom_density_ridges_gradient(scale = 3, rel_min_height = 0.01) +
+  scale_fill_viridis(option = "C") +
+  labs(title = 'Similarity to article', subtitle = "Performance Q by sorting policy") +
+  theme_ipsum() +
+    theme(
+      legend.position="none",
+      panel.spacing = unit(0.1, "lines"),
+      strip.text.x = element_text(size = 8),
+      plot.title = element_text(size = 12)
+    )+
+  xlim(-1.1, 1.1)
+
+p_ridge_sentpos <- ggplot(df_sentpos_long, aes(x = Q, y = policies, fill = ..x..)) +
+  geom_density_ridges_gradient(scale = 3, rel_min_height = 0.01) +
+  scale_fill_viridis(option = "C") +
+  labs(title = 'Positive sentiment score', subtitle = "Performance Q by sorting policy") +
+  theme_ipsum() +
+    theme(
+      legend.position="none",
+      panel.spacing = unit(0.1, "lines"),
+      strip.text.x = element_text(size = 8),
+      plot.title = element_text(size = 12)
+    )+
+  xlim(-1.1, 1.1)
+
+p_ridge_sentneu <- ggplot(df_sentneu_long, aes(x = Q, y = policies, fill = ..x..)) +
+  geom_density_ridges_gradient(scale = 3, rel_min_height = 0.01) +
+  scale_fill_viridis(option = "C") +
+  labs(title = 'Neutral sentiment', subtitle = "Performance Q by sorting policy") +
+  theme_ipsum() +
+    theme(
+      legend.position="none",
+      panel.spacing = unit(0.1, "lines"),
+      strip.text.x = element_text(size = 8),
+      plot.title = element_text(size = 12)
+    )+
+  xlim(-1.1, 1.1)
+
+p_ridge_sentneg <- ggplot(df_sentneg_long, aes(x = Q, y = policies, fill = ..x..)) +
+  geom_density_ridges_gradient(scale = 3, rel_min_height = 0.01) +
+  scale_fill_viridis(option = "C") +
+  labs(title = 'Negative sentiment', subtitle = "Performance Q by sorting policy") +
+  theme_ipsum() +
+    theme(
+      legend.position="none",
+      panel.spacing = unit(0.1, "lines"),
+      strip.text.x = element_text(size = 8),
+      plot.title = element_text(size = 12)
+    )+
+  xlim(-1.1, 1.1)
+
+
+library(gridExtra)
+grid.arrange(p_ridge_smog, p_ridge_lexdiv, p_ridge_cosine,
+             p_ridge_sentpos, p_ridge_sentneu, p_ridge_sentneg,
+             
+             nrow = 3)
+
+```
+
+
+##Pairwise Mann-Whitney test
+```{r}
+# USER-BASED
+
+# Generate all possible combinations of length 2 from 1:10
+combinations <- combn(1:10, 2)
+df_mann_whitney_user <- data.frame(matrix(nrow = 0, ncol = 6))
+n_list <- c("10", "50", "100", "N")
+
+# for all possible Ns
+for(j in 1:4){
+  
+  j <- 4 # test
+  
+  # for all possible combinations
+  for(i in 1:45){
+    
+    i <- 17
+    
+    # get index of columns to compare
+    col1_index <- combinations[1,i]
+    col2_index <- combinations[2,i]
+    
+    # get colnames
+    col1_name <- colnames(user_based_avg_smog[[j]])[col1_index]
+    col2_name <- colnames(user_based_avg_smog[[j]])[col2_index]
+    
+    print(paste0(col1_name, " & ", col2_name))
+    
+    # for each score, create new dataframe
+    df_temp_smog <- user_based_avg_smog[[j]][,c(col1_index, col2_index)]
+    df_temp_lexdiv <- user_based_avg_lexdiv[[j]][,c(col1_index, col2_index)]
+    df_temp_sim <- user_based_avg_sim[[j]][,c(col1_index, col2_index)]
+    df_temp_sentclass <- user_based_avg_sentclass[[j]][,c(col1_index, col2_index)]
+    
+    # pivot longer
+    df_temp_smog_longer <- df_temp_smog %>% pivot_longer(cols = c(1,2), names_to = "policy", values_to = "values")
+    df_temp_lexdiv_longer <- df_temp_lexdiv %>% pivot_longer(cols = c(1,2), names_to = "policy", values_to = "values")
+    df_temp_sim_longer <- df_temp_sim %>% pivot_longer(cols = c(1,2), names_to = "policy", values_to = "values")
+    df_temp_sentclass_longer <- df_temp_sentclass %>% pivot_longer(cols = c(1,2), names_to = "policy", values_to = "values")
+    
+    # Mann Whitney U Test
+    res_smog <- wilcox.test(values ~ policy, data = df_temp_smog_longer)
+    res_lexdiv <- wilcox.test(values ~ policy, data = df_temp_lexdiv_longer)
+    res_sim <- wilcox.test(values ~ policy, data = df_temp_sim_longer)
+    res_sentclass <- wilcox.test(values ~ policy, data = df_temp_sentclass_longer)
+    
+    df_mann_whitney_user <- rbind(df_mann_whitney_user, 
+                             c(paste0(col1_name, " & ", col2_name), 
+                               n_list[[j]], 
+                               round(res_smog$p.value, 4),
+                               round(res_lexdiv$p.value, 4),
+                               round(res_sim$p.value, 4),
+                               round(res_sentclass$p.value, 4)))
+  }
+  
+}
+
+colnames(df_mann_whitney_user) <- c("policies", "n", paste0("p_", scores))
+
+
+#### export table
+
+png("df_mann_whitney_user.png", height = 30*nrow(df_mann_whitney_user), width = 200*ncol(df_mann_whitney_user))
+grid.table(df_mann_whitney_user)
+dev.off()
+
+
+# EDITOR-BASED
+
+# Generate all possible combinations of length 2 from 1:2
+combinations <- combn(1:2, 2)
+df_mann_whitney_editor <- data.frame(matrix(nrow = 0, ncol = 6))
+n_list <- c("10", "50", "100", "N")
+
+# for all possible Ns
+for(j in 1:4){
+  
+  # for all possible combinations
+  for(i in 1:1){
+    
+    # get index of columns to compare
+    col1_index <- combinations[1,i]
+    col2_index <- combinations[2,i]
+    
+    # get colnames
+    col1_name <- colnames(editor_based_avg_smog[[j]])[col1_index]
+    col2_name <- colnames(editor_based_avg_smog[[j]])[col2_index]
+    
+    print(paste0(col1_name, " & ", col2_name))
+    
+    # for each score, create new dataframe
+    df_temp_smog <- editor_based_avg_smog[[j]][,c(col1_index, col2_index)]
+    df_temp_lexdiv <- editor_based_avg_lexdiv[[j]][,c(col1_index, col2_index)]
+    df_temp_sim <- editor_based_avg_sim[[j]][,c(col1_index, col2_index)]
+    df_temp_sentclass <- editor_based_avg_sentclass[[j]][,c(col1_index, col2_index)]
+    
+    # pivot longer
+    df_temp_smog_longer <- df_temp_smog %>% pivot_longer(cols = c(1,2), names_to = "policy", values_to = "values")
+    df_temp_lexdiv_longer <- df_temp_lexdiv %>% pivot_longer(cols = c(1,2), names_to = "policy", values_to = "values")
+    df_temp_sim_longer <- df_temp_sim %>% pivot_longer(cols = c(1,2), names_to = "policy", values_to = "values")
+    df_temp_sentclass_longer <- df_temp_sentclass %>% pivot_longer(cols = c(1,2), names_to = "policy", values_to = "values")
+    
+    # Mann Whitney U Test
+    res_smog <- wilcox.test(values ~ policy, data = df_temp_smog_longer)
+    res_lexdiv <- wilcox.test(values ~ policy, data = df_temp_lexdiv_longer)
+    res_sim <- wilcox.test(values ~ policy, data = df_temp_sim_longer)
+    res_sentclass <- wilcox.test(values ~ policy, data = df_temp_sentclass_longer)
+    
+    
+    df_mann_whitney_editor <- rbind(df_mann_whitney_editor, 
+                             c(paste0(col1_name, " & ", col2_name), 
+                               n_list[[j]], 
+                               round(res_smog$p.value, 4),
+                               round(res_lexdiv$p.value, 4),
+                               round(res_sim$p.value, 4),
+                               round(res_sentclass$p.value, 4)))
+  }
+  
+}
+
+colnames(df_mann_whitney_editor) <- c("policies", "n", paste0("p_", scores))
+
+
+#### export table
+
+png("df_mann_whitney_editor.png", height = 30*nrow(df_mann_whitney_editor), width = 200*ncol(df_mann_whitney_editor))
+grid.table(df_mann_whitney_editor)
+dev.off()
+
+
+
+# STRUCTURE-BASED
+
+# Generate all possible combinations of length 2 from 1:6
+combinations <- combn(1:3, 2)
+df_mann_whitney_structure <- data.frame(matrix(nrow = 0, ncol = 6))
+n_list <- c("10", "50", "100", "N")
+
+# for all possible Ns
+for(j in 1:4){
+  
+  # for all possible combinations
+  for(i in 1:3){
+    
+    # get index of columns to compare
+    col1_index <- combinations[1,i]
+    col2_index <- combinations[2,i]
+    
+    # get colnames
+    col1_name <- colnames(structure_based_avg_smog[[j]])[col1_index]
+    col2_name <- colnames(structure_based_avg_smog[[j]])[col2_index]
+    
+    print(paste0(col1_name, " & ", col2_name))
+    
+    # for each score, create new dataframe
+    df_temp_smog <- structure_based_avg_smog[[j]][,c(col1_index, col2_index)]
+    df_temp_lexdiv <- structure_based_avg_lexdiv[[j]][,c(col1_index, col2_index)]
+    df_temp_sim <- structure_based_avg_sim[[j]][,c(col1_index, col2_index)]
+    df_temp_sentclass <- structure_based_avg_sentclass[[j]][,c(col1_index, col2_index)]
+    
+    # pivot longer
+    df_temp_smog_longer <- df_temp_smog %>% pivot_longer(cols = c(1,2), names_to = "policy", values_to = "values")
+    df_temp_lexdiv_longer <- df_temp_lexdiv %>% pivot_longer(cols = c(1,2), names_to = "policy", values_to = "values")
+    df_temp_sim_longer <- df_temp_sim %>% pivot_longer(cols = c(1,2), names_to = "policy", values_to = "values")
+    df_temp_sentclass_longer <- df_temp_sentclass %>% pivot_longer(cols = c(1,2), names_to = "policy", values_to = "values")
+    
+    # Mann Whitney U Test
+    res_smog <- wilcox.test(values ~ policy, data = df_temp_smog_longer)
+    res_lexdiv <- wilcox.test(values ~ policy, data = df_temp_lexdiv_longer)
+    res_sim <- wilcox.test(values ~ policy, data = df_temp_sim_longer)
+    res_sentclass <- wilcox.test(values ~ policy, data = df_temp_sentclass_longer)
+    
+    
+    df_mann_whitney_structure <- rbind(df_mann_whitney_structure, 
+                             c(paste0(col1_name, " & ", col2_name), 
+                               n_list[[j]], 
+                               round(res_smog$p.value, 4),
+                               round(res_lexdiv$p.value, 4),
+                               round(res_sim$p.value, 4),
+                               round(res_sentclass$p.value, 4)))
+  }
+  
+}
+
+colnames(df_mann_whitney_structure) <- c("policies", "n", paste0("p_", scores))
+
+
+#### export table
+
+png("df_mann_whitney_structure.png", height = 30*nrow(df_mann_whitney_structure), width = 200*ncol(df_mann_whitney_structure))
+grid.table(df_mann_whitney_structure)
+dev.off()
+
+
+```
+
+
+
+
+#Average over all articles - x = number of articles
+```{r}
+# create lists to store value dataframes of each article
+df_plot_smog_list <- list()
+df_plot_lexdiv_list <- list()
+df_plot_rel_list <- list()
+
+#a <- unique(comment_info_general$article)[50]
+
+# for each article
+for(a in unique(comment_info_general$article)[1:100]){ # loop through comment_info to avoid articles with 0 comments
+  
+  print(a)
+  
+  # get feature dataframe
+  comment_data_a <- get_feature_df(a)
+  
+  # sort dataframe by 36 sorting policies
+  df_sort_list_rh <- sort_pols_rh(comment_data_a) # only root comments (16)
+  df_sort_list_rt <- sort_pols_rt(comment_data_a) # all comments (94)
+  df_sort_list_rl <- sort_pols_rl(comment_data_a) # all comments (94)
+  df_sort_list_flat <- c(df_sort_list_rh, df_sort_list_rt, df_sort_list_rl)
+  
+  # get dataframe with all sorting values as columns
+  df_plot_smog_a <- top_10p_SMOG(df_sort_list_flat, sorting_policies_list_flat)
+  df_plot_cosine1_a <- top_10p_cosine1(df_sort_list_flat, sorting_policies_list_flat)
+  df_plot_lexdiv_a <- top_10p_lexdiv(df_sort_list_flat, sorting_policies_list_flat)
+  
+  # fill in zeros to reach 5000 comments
+  num_missing <- 5000 - nrow(df_plot_smog_a)
+  fill_df <- data.frame(df_plot_smog_a)
+  colnames(fill_df) <- gsub("\\.", "-", colnames(fill_df))
+  fill_df <- fill_df[1:num_missing,]
+  fill_df[] <- 0
+  fill_df$n_rel <- (nrow(df_plot_smog_a)+1) : 5000
+  df_plot_smog_a <- rbind(df_plot_smog_a, fill_df)
+  df_plot_cosine1_a <- rbind(df_plot_cosine1_a, fill_df)
+  df_plot_lexdiv_a <- rbind(df_plot_lexdiv_a, fill_df)
+  
+  # add dataframe to lists
+  df_plot_smog_list <- c(df_plot_smog_list, list(df_plot_smog_a))
+  df_plot_rel_list <- c(df_plot_rel_list, list(df_plot_cosine1_a))
+  df_plot_lexdiv_list <- c(df_plot_lexdiv_list, list(df_plot_lexdiv_a))
+}
+
+length(df_plot_smog_list)
+length(df_plot_rel_list)
+length(df_plot_lexdiv_list)
+
+
+#df_plot_x_list <- df_plot_smog_list
+
+# for a df_plot_list, get average and pivot longer
+get_df_plot <- function(df_plot_x_list){
+  
+  # Initialize dataframe with first article to store the result
+  df_plot_x <- df_plot_x_list[[1]]
+  
+  # Loop through the dataframes in the list
+  for (i in 2:length(df_plot_x_list)) {
+    df_plot_x <- df_plot_x + df_plot_x_list[[i]]
+  }
+  
+  # Divide the result by the number of dataframes to get the average
+  df_plot_x <- df_plot_x / length(df_plot_x_list)
+  
+  # pivot long for plotting
+  df_plot_x_long <- df_plot_x %>% pivot_longer(cols = all_of(sorting_policies_list_flat),
+                                             names_to = "sorting_policy",
+                                             values_to = "values")
+  }
+
+df_plot_smog <- get_df_plot(df_plot_smog_list)
+df_plot_rel <- get_df_plot(df_plot_rel_list)
+df_plot_lexdiv <- get_df_plot(df_plot_lexdiv_list)
+
+```
+
+
+
+
+```{r}
+# by category - user
+df_smog_long <- df_avg_user_smog %>% pivot_longer(cols = colnames(df_avg_user_smog), names_to = "sorting_policy", values_to = "SMOG_readability")
+df_lexdiv_long <- df_avg_user_lexdiv %>% pivot_longer(cols = colnames(df_avg_user_lexdiv), names_to = "sorting_policy", values_to = "lexdiv")
+df_cosine1_long <- df_avg_user_cosine %>% pivot_longer(cols = colnames(df_avg_user_cosine), names_to = "sorting_policy", values_to = "cosine")
+df_sentpos_long <- df_avg_user_sentpos %>% pivot_longer(cols = colnames(df_avg_user_sentpos), names_to = "sorting_policy", values_to = "sent_pos")
+df_sentneu_long <- df_avg_user_sentneu %>% pivot_longer(cols = colnames(df_avg_user_sentneu), names_to = "sorting_policy", values_to = "sent_neu")
+df_sentneg_long <- df_avg_user_sentneg %>% pivot_longer(cols = colnames(df_avg_user_sentneg), names_to = "sorting_policy", values_to = "sent_neg")
+
+# by category - editor
+df_smog_long <- df_avg_editor_smog %>% pivot_longer(cols = colnames(df_avg_editor_smog), names_to = "sorting_policy", values_to = "SMOG_readability")
+df_lexdiv_long <- df_avg_editor_lexdiv %>% pivot_longer(cols = colnames(df_avg_editor_lexdiv), names_to = "sorting_policy", values_to = "lexdiv")
+df_cosine1_long <- df_avg_editor_cosine %>% pivot_longer(cols = colnames(df_avg_editor_cosine), names_to = "sorting_policy", values_to = "cosine")
+df_sentpos_long <- df_avg_editor_sentpos %>% pivot_longer(cols = colnames(df_avg_editor_sentpos), names_to = "sorting_policy", values_to = "sent_pos")
+df_sentneu_long <- df_avg_editor_sentneu %>% pivot_longer(cols = colnames(df_avg_editor_sentneu), names_to = "sorting_policy", values_to = "sent_neu")
+df_sentneg_long <- df_avg_editor_sentneg %>% pivot_longer(cols = colnames(df_avg_editor_sentneg), names_to = "sorting_policy", values_to = "sent_neg")
+
+# by category - structure
+df_smog_long <- df_avg_structure_smog %>% pivot_longer(cols = colnames(df_avg_structure_smog), names_to = "sorting_policy", values_to = "SMOG_readability")
+df_lexdiv_long <- df_avg_structure_lexdiv %>% pivot_longer(cols = colnames(df_avg_structure_lexdiv), names_to = "sorting_policy", values_to = "lexdiv")
+df_cosine1_long <- df_avg_structure_cosine %>% pivot_longer(cols = colnames(df_avg_structure_cosine), names_to = "sorting_policy", values_to = "cosine")
+df_sentpos_long <- df_avg_structure_sentpos %>% pivot_longer(cols = colnames(df_avg_structure_sentpos), names_to = "sorting_policy", values_to = "sent_pos")
+df_sentneu_long <- df_avg_structure_sentneu %>% pivot_longer(cols = colnames(df_avg_structure_sentneu), names_to = "sorting_policy", values_to = "sent_neu")
+df_sentneg_long <- df_avg_structure_sentneg %>% pivot_longer(cols = colnames(df_avg_structure_sentneg), names_to = "sorting_policy", values_to = "sent_neg")
+```
+
+
+
+##Distribution graphs
+```{r, fig.width=10, fig.height=10}
+
+# library
+library(ggridges)
+library(ggplot2)
+library(viridis)
+library(hrbrthemes)
+
+# Plot
+p_ridge_smog <- ggplot(df_smog_long, aes(x = SMOG_readability, y = sorting_policy, fill = ..x..)) +
+  geom_density_ridges_gradient(scale = 3, rel_min_height = 0.01) +
+  scale_fill_viridis(option = "C") +
+  labs(title = 'Readability score by sorting policy') +
+  theme_ipsum() +
+    theme(
+      legend.position="none",
+      panel.spacing = unit(0.1, "lines"),
+      strip.text.x = element_text(size = 8),
+      plot.title = element_text(size = 12)
+    )
+
+p_ridge_lexdiv <- ggplot(df_lexdiv_long, aes(x = lexdiv, y = sorting_policy, fill = ..x..)) +
+  geom_density_ridges_gradient(scale = 3, rel_min_height = 0.01) +
+  scale_fill_viridis(option = "C") +
+  labs(title = 'Lexdiv score by sorting policy') +
+  theme_ipsum() +
+    theme(
+      legend.position="none",
+      panel.spacing = unit(0.1, "lines"),
+      strip.text.x = element_text(size = 8),
+      plot.title = element_text(size = 12)
+    )
+
+p_ridge_cosine <- ggplot(df_cosine1_long, aes(x = cosine, y = sorting_policy, fill = ..x..)) +
+  geom_density_ridges_gradient(scale = 3, rel_min_height = 0.01) +
+  scale_fill_viridis(option = "C") +
+  labs(title = 'Cosine score by sorting policy') +
+  theme_ipsum() +
+    theme(
+      legend.position="none",
+      panel.spacing = unit(0.1, "lines"),
+      strip.text.x = element_text(size = 8),
+      plot.title = element_text(size = 12)
+    )
+
+p_ridge_sentpos <- ggplot(df_sentpos_long, aes(x = sent_pos, y = sorting_policy, fill = ..x..)) +
+  geom_density_ridges_gradient(scale = 3, rel_min_height = 0.01) +
+  scale_fill_viridis(option = "C") +
+  labs(title = 'Positive sentiment score by sorting policy') +
+  theme_ipsum() +
+    theme(
+      legend.position="none",
+      panel.spacing = unit(0.1, "lines"),
+      strip.text.x = element_text(size = 8),
+      plot.title = element_text(size = 12)
+    )
+
+p_ridge_sentneu <- ggplot(df_sentneu_long, aes(x = sent_neu, y = sorting_policy, fill = ..x..)) +
+  geom_density_ridges_gradient(scale = 3, rel_min_height = 0.01) +
+  scale_fill_viridis(option = "C") +
+  labs(title = 'Neutral sentiment score by sorting policy') +
+  theme_ipsum() +
+    theme(
+      legend.position="none",
+      panel.spacing = unit(0.1, "lines"),
+      strip.text.x = element_text(size = 8),
+      plot.title = element_text(size = 12)
+    )
+
+p_ridge_sentneg <- ggplot(df_sentneg_long, aes(x = sent_neg, y = sorting_policy, fill = ..x..)) +
+  geom_density_ridges_gradient(scale = 3, rel_min_height = 0.01) +
+  scale_fill_viridis(option = "C") +
+  labs(title = 'Negative sentiment score by sorting policy') +
+  theme_ipsum() +
+    theme(
+      legend.position="none",
+      panel.spacing = unit(0.1, "lines"),
+      strip.text.x = element_text(size = 8),
+      plot.title = element_text(size = 12)
+    )
+
+
+library(gridExtra)
+grid.arrange(p_ridge_smog, p_ridge_lexdiv, p_ridge_cosine,
+             p_ridge_sentpos, p_ridge_sentneu, p_ridge_sentneg,
+             
+             nrow = 3)
+
+```
+
+
+##Stats
+```{r}
+policy_categories <- data.frame(user_based = unlist(lapply(stats_smog_36$policy, function(x) strsplit(x,"_")[[1]][1])),
+                                  editor_based = rep(c("not_pinned", "pinned"),18),
+                                  structure_based = unlist(lapply(stats_smog_36$policy, function(x) substr(x, nchar(x)-1, nchar(x)))))
+
+
+# All 36 policies
+
+get_stats <- function(df_x){
+  
+  means <- c()
+  medians <- c()
+  SDs <- c()
+  mins <- c()
+  maxs <- c()
+  
+  # loop through all sorting policies
+  for(i in 1:36){
+    mins <- append(mins, as.numeric(summary(df_x[,i])[1]))
+    maxs <- append(maxs, as.numeric(summary(df_x[,i])[6]))
+    means <- append(means, as.numeric(summary(df_x[,i])[4]))
+    medians <- append(medians, as.numeric(summary(df_x[,i])[3]))
+    SDs <- append(SDs, as.numeric(sd(df_x[,1], na.rm = TRUE)))
+  }
+  
+  stats_x_36 <- data.frame(mean = means, 
+                              median = medians, 
+                              SD = SDs,
+                              min = mins,
+                              max = maxs
+                              )
+  
+  stats_x_36$policy <- sorting_policies_list_flat
+  
+  stats_x_36 <- cbind(stats_x_36, policy_categories)
+  
+  return(stats_x_36)
+}
+
+#get stats for all features
+stats_smog_36 <- get_stats(df_smog)
+stats_lexdiv_36 <- get_stats(df_lexdiv)
+stats_cosine_36 <- get_stats(df_cosine1)
+stats_sentpos_36 <- get_stats(df_sentpos)
+stats_sentneu_36 <- get_stats(df_sentneu)
+stats_sentneg_36 <- get_stats(df_sentneg)
+
+options(scipen = 999)
+
+colnames(stats_smog_36)
+
+View(stats_sentneg_36)
+
+# get averages by User-based
+user_smog <- stats_smog_36 %>% group_by(user_based) %>% summarise(mean = mean(mean), median = mean(median), sd = mean(SD))
+user_lexdiv <- stats_lexdiv_36 %>% group_by(user_based) %>% summarise(mean = mean(mean), median = mean(median), sd = mean(SD))
+user_cosine <- stats_cosine_36 %>% group_by(user_based) %>% summarise(mean = mean(mean), median = mean(median), sd = mean(SD))
+user_sentpos <- stats_sentpos_36 %>% group_by(user_based) %>% summarise(mean = mean(mean), median = mean(median), sd = mean(SD))
+user_sentneu <- stats_sentneu_36 %>% group_by(user_based) %>% summarise(mean = mean(mean), median = mean(median), sd = mean(SD))
+user_sentneg <- stats_sentneg_36 %>% group_by(user_based) %>% summarise(mean = mean(mean), median = mean(median), sd = mean(SD))
+
+# get averages by editor-based
+editor_smog <- stats_smog_36 %>% group_by(editor_based) %>% summarise(mean = mean(mean), median = mean(median), sd = mean(SD))
+editor_lexdiv <- stats_lexdiv_36 %>% group_by(editor_based) %>% summarise(mean = mean(mean), median = mean(median), sd = mean(SD))
+editor_cosine <- stats_cosine_36 %>% group_by(editor_based) %>% summarise(mean = mean(mean), median = mean(median), sd = mean(SD))
+editor_sentpos <- stats_sentpos_36 %>% group_by(editor_based) %>% summarise(mean = mean(mean), median = mean(median), sd = mean(SD))
+editor_sentneu <- stats_sentneu_36 %>% group_by(editor_based) %>% summarise(mean = mean(mean), median = mean(median), sd = mean(SD))
+editor_sentneg <- stats_sentneg_36 %>% group_by(editor_based) %>% summarise(mean = mean(mean), median = mean(median), sd = mean(SD))
+
+
+# get averages by structure-based
+structure_smog <- stats_smog_36 %>% group_by(structure_based) %>% summarise(mean = mean(mean), median = mean(median), sd = mean(SD))
+structure_lexdiv <- stats_lexdiv_36 %>% group_by(structure_based) %>% summarise(mean = mean(mean), median = mean(median), sd = mean(SD))
+structure_cosine <- stats_cosine_36 %>% group_by(structure_based) %>% summarise(mean = mean(mean), median = mean(median), sd = mean(SD))
+structure_sentpos <- stats_sentpos_36 %>% group_by(structure_based) %>% summarise(mean = mean(mean), median = mean(median), sd = mean(SD))
+structure_sentneu <- stats_sentneu_36 %>% group_by(structure_based) %>% summarise(mean = mean(mean), median = mean(median), sd = mean(SD))
+structure_sentneg <- stats_sentneg_36 %>% group_by(structure_based) %>% summarise(mean = mean(mean), median = mean(median), sd = mean(SD))
+
+
+
+```
+
+
+##Mann-Whitney U Test
+```{r}
+#1. SUM UP POLICY COLUMNS
+
+# user-based:
+get_avg_user_df <- function(df_x){
+  
+  df_avg_user <- data.frame(matrix(nrow = 5874, ncol = 0)) 
+  
+  # loop through 6 different policies
+  for(i in seq(1,12,2)){ # 6 different policies
+    
+    avg_column <- rowMeans(df_x[,c(i, i+1,
+                        i+12, i+13,
+                        i+24, i+25)])
+    
+    df_avg_user <- cbind(df_avg_user, avg_column)
+  }
+  
+  colnames(df_avg_user) <- unique(policy_categories$user_based)
+  
+  return(df_avg_user)
+}
+
+
+# editor-based:
+get_avg_editor_df <- function(df_x){
+  
+  df_avg_editor <- data.frame(matrix(nrow = 5874, ncol = 0)) 
+  
+  # loop through 2 different policies
+  for(i in 1:2){ 
+    
+    col_index <- seq(i,36,2)
+    
+    avg_column <- rowMeans(df_x[,col_index])
+    
+    df_avg_editor <- cbind(df_avg_editor, avg_column)
+  }
+  
+  colnames(df_avg_editor) <- unique(policy_categories$editor_based)
+  
+  return(df_avg_editor)
+}
+
+
+# structure-based:
+get_avg_structure_df <- function(df_x){
+  
+  df_avg_structure <- data.frame(matrix(nrow = 5874, ncol = 0)) 
+  
+  # loop through 3 different policies
+  for(i in seq(1,36,12)){ 
+    
+    col_index <- i:(i+11)
+    
+    avg_column <- rowMeans(df_x[,col_index])
+    
+    df_avg_structure <- cbind(df_avg_structure, avg_column)
+  }
+  
+  colnames(df_avg_structure) <- unique(policy_categories$structure_based)
+  
+  return(df_avg_structure)
+}
+
+
+
+#2. PAIRWISE DFs
+
+# USERS
+
+# metric
+df_avg_user_smog <- get_avg_user_df(df_smog)
+df_avg_user_lexdiv <- get_avg_user_df(df_lexdiv)
+df_avg_user_cosine <- get_avg_user_df(df_cosine1)
+df_avg_user_sentpos <- get_avg_user_df(df_sentpos)
+df_avg_user_sentneu <- get_avg_user_df(df_sentneu)
+df_avg_user_sentneg <- get_avg_user_df(df_sentneg)
+
+# Generate all possible combinations of length 2 from 1:6
+combinations <- combn(1:6, 2)
+
+# for all possible combinations
+for(i in 1:15){
+  
+  # get index of columns to compare
+  col1_index <- combinations[1,i]
+  col2_index <- combinations[2,i]
+  
+  # get colnames
+  col1_name <- colnames(df_avg_user_sentneg)[col1_index]
+  col2_name <- colnames(df_avg_user_sentneg)[col2_index]
+  
+  print(paste0(col1_name, " & ", col2_name))
+  
+  # create new dataframe
+  df_temp <- df_avg_user_sentneg[,c(col1_index, col2_index)]
+  
+  print(df_temp)
+  
+  # pivot longer
+  df_temp_longer <- df_temp %>% pivot_longer(cols = c(1,2), names_to = "policy", values_to = "values")
+  
+  # Mann Whitney U Test
+  res <- wilcox.test(values ~ policy,
+                 data = df_temp_longer)
+  
+  print(res$statistic)
+  print(res$p.value)
+}
+
+
+# EDITORS
+# metric
+df_avg_editor_smog <- get_avg_editor_df(df_smog)
+df_avg_editor_lexdiv <- get_avg_editor_df(df_lexdiv)
+df_avg_editor_cosine <- get_avg_editor_df(df_cosine1)
+df_avg_editor_sentpos <- get_avg_editor_df(df_sentpos)
+df_avg_editor_sentneu <- get_avg_editor_df(df_sentneu)
+df_avg_editor_sentneg <- get_avg_editor_df(df_sentneg)
+
+# Generate all possible combinations of length 2 from 1:6
+combinations <- combn(1:2, 2)
+
+# for all possible combinations
+for(i in 1:1){
+  
+  # get index of columns to compare
+  col1_index <- combinations[1,i]
+  col2_index <- combinations[2,i]
+  
+  # get colnames
+  col1_name <- colnames(df_avg_editor_sentneg)[col1_index]
+  col2_name <- colnames(df_avg_editor_sentneg)[col2_index]
+  
+  print(paste0(col1_name, " & ", col2_name))
+  
+  # create new dataframe
+  df_temp <- df_avg_editor_sentneg[,c(col1_index, col2_index)]
+  
+  print(df_temp)
+  
+  # pivot longer
+  df_temp_longer <- df_temp %>% pivot_longer(cols = c(1,2), names_to = "policy", values_to = "values")
+  
+  # Mann Whitney U Test
+  res <- wilcox.test(values ~ policy,
+                 data = df_temp_longer)
+  
+  print(res$statistic)
+  print(res$p.value)
+}
+
+
+
+
+# STRUCTURE
+# metric
+df_avg_structure_smog <- get_avg_structure_df(df_smog)
+df_avg_structure_lexdiv <- get_avg_structure_df(df_lexdiv)
+df_avg_structure_cosine <- get_avg_structure_df(df_cosine1)
+df_avg_structure_sentpos <- get_avg_structure_df(df_sentpos)
+df_avg_structure_sentneu <- get_avg_structure_df(df_sentneu)
+df_avg_structure_sentneg <- get_avg_structure_df(df_sentneg)
+
+# Generate all possible combinations of length 2 from 1:6
+combinations <- combn(1:3, 2)
+
+# for all possible combinations
+for(i in 1:3){
+  
+  # get index of columns to compare
+  col1_index <- combinations[1,i]
+  col2_index <- combinations[2,i]
+  
+  # get colnames
+  col1_name <- colnames(df_avg_structure_sentneg)[col1_index]
+  col2_name <- colnames(df_avg_structure_sentneg)[col2_index]
+  
+  print(paste0(col1_name, " & ", col2_name))
+  
+  # create new dataframe
+  df_temp <- df_avg_structure_sentneg[,c(col1_index, col2_index)]
+  
+  print(df_temp)
+  
+  # pivot longer
+  df_temp_longer <- df_temp %>% pivot_longer(cols = c(1,2), names_to = "policy", values_to = "values")
+  
+  # Mann Whitney U Test
+  res <- wilcox.test(values ~ policy,
+                 data = df_temp_longer)
+  
+  print(res$statistic)
+  print(res$p.value)
+}
+
+
+options(scipen=0)
+
+
+```

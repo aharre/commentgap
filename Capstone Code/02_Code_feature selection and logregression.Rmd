@@ -1,0 +1,1273 @@
+---
+title: "Feature selection & models"
+output: html_document
+date: "2023-08-07"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(quanteda)
+library(quanteda.textstats)
+library(quanteda.textmodels)
+library(dplyr)
+library(stringr)
+library(MASS)
+library(ggplot2)
+
+```
+
+
+
+#Features
+
+##I Features - intrinsic quality
+```{r}
+# OBJECTIVITY / EMOTIONALITY
+# sentiment -> Python
+
+# civility
+
+# personal experience -> maybe use Standard labels
+
+# subjectivity
+
+# conversational vs. informative
+
+
+# BELIEVABILITY
+# lexical diversity
+comment_data_1$lexdiv_cttr <- as.vector(textstat_lexdiv(dfm, c("CTTR"))[2])$CTTR
+summary(as.numeric(comment_data_1$lexdiv_cttr))
+
+# punctuation
+comment_data_1$num_punct <- str_count(comment_data_1$text, "\\p{P}")
+mean(str_count(comment_info_general$text, "\\p{P}"), na.rm=TRUE)
+
+# number of named entities
+
+# number of parts of speech ?
+
+# perplexity / entropy
+
+
+### table
+comment_data_1 %>% group_by(pinned_f) %>% summarise(mean(num_punct),
+                                                          mean(lexdiv_cttr, na.rm = TRUE))
+
+```
+
+##II Features - contextual quality
+```{r}
+# RELEVANCE
+# relevance - word vector similarity vs article
+documents <- c(article_info_0922$text[which(article_info_0922$url=="/story/2000139445394/druckprobleme-legen-ostsee-pipelines-nord-stream-1-und-2-lahm")], comment_text_all) #  change back to general
+doc_names <- c("article", comment_data_1$id)
+corpus <- corpus(documents, docnames = doc_names)
+tokens <- corpus %>% 
+  tokens(what="word", remove_punct = TRUE, remove_numbers = TRUE) %>% 
+  tokens_remove(stopwords("de")) %>% 
+  tokens_wordstem()
+dfm <- dfm(tokens) %>% dfm_trim(min_termfreq = 2) %>% dfm_tfidf()
+topfeatures(dfm, 20)
+
+# method 1
+similarities_1 <- textstat_simil(dfm, method="cosine")
+comment_data_1$cosine_1 <- as.vector(similarities_1[1,-1])
+
+# method 2
+# Compute similarities
+similarities <- cosine_similarities("article", dfm)
+# Store similarities in data frame
+df_similarities <- similarities %>% as.matrix() %>% as.data.frame()
+colnames(df_similarities) <- "similarity"
+# Sort similarities
+df_similarities %>%
+  order(desc(similarity))
+
+# relevance - topic modelling?
+
+
+# NOVELTY
+# word vector vs other comments
+
+# centroid score vs other comments?
+
+
+# AMOUNT
+# num of words
+# splitting a string by spaces
+split <- strsplit(comment_data_1$text, " ")
+comment_data_1$num_words <- sapply(split, length)
+
+# num of sentences
+comment_data_1$num_sentences <- nsentence(comment_data_1$text)
+
+# number of characters
+comment_data_1$num_char <- nchar(comment_data_1$text)
+
+# TIMELINESS
+# time of day published
+comment_data_1$time <- format(comment_data_1$date, "%H:%M:%S")
+comment_data_1$hour <- as.numeric(format(comment_data_1$date, "%H"))
+
+# num days since article published
+comment_article_merge <- merge(comment_info_general, article_info, by.x = "article", by.y = "url")
+comment_article_merge$diff_days <- as.numeric(difftime(comment_article_merge$date.x, comment_article_merge$date_1 , units = c("days")))
+
+# POSITION IN DISCUSSION
+# is root
+comment_info_general$is_root_comment
+
+# is leaf
+comment_info_general$is_leaf_comment
+
+# size of reply tree
+comment_info_general$size_of_tree
+
+# height of reply tree
+comment_info_general$height_of_tree
+
+# position in reply tree
+comment_info_general$level_in_tree
+
+
+### table
+comment_article_merge %>% group_by(pinned_f) %>% summarise(mean(cosine_1, na.rm = TRUE),
+                                                           mean(num_words), 
+                                                          mean(num_sentences),
+                                                          mean(num_char),
+                                                          mean(diff_days),
+                                                          mean(comment_info_general$hour),
+                                                          mean(is_root_comment),
+                                                          mean(is_leaf_comment),
+                                                          mean(size_of_tree),
+                                                          mean(height_of_tree),
+                                                          mean(level_in_tree))
+
+```
+
+##III Features - representational quality
+```{r}
+# EASE OF UNDERSTANDING
+# characters-to-sentences ratio
+comment_data_1$char_to_sent <- comment_data_1$num_char/comment_data_1$num_sentences
+
+# words-to-sentences ratio
+comment_data_1$word_to_sent <- comment_data_1$num_words/comment_data_1$num_sentences
+
+# readability (i.e., the SMOG standard index of reading grade level)
+corpus <- corpus(comment_text_all)
+comment_data_1$SMOG_readability <- unlist(as.vector(textstat_readability(corpus, measure = "SMOG.de")[2]))
+
+# number of unique words
+comment_data_1$num_words_unique <- sapply(sapply(split, unique), length)
+
+# SOCIAL PRESENCE
+# tagging or referencing other users
+comment_data_1$second_person <- grepl("\\b(Du|Sie|du)\\b",comment_data_1$heading_and_text.comment)
+
+# AUTHOR REPUTATION
+# registration age
+
+# num of mitposterinnen
+comment_info_general$user_follower
+
+# num of comments
+
+
+### table
+comment_info_general %>% group_by(pinned_f) %>% summarise(mean(char_to_sent, na.rm = TRUE), 
+                                                          mean(word_to_sent, na.rm = TRUE),
+                                                          mean(SMOG_readability, na.rm = TRUE),
+                                                          mean(num_words_unique))
+
+```
+
+
+##Features - as a function
+```{r}
+summary(comment_info_general)
+
+#format existing variables
+comment_info_general$user_follower <- ifelse(is.na(comment_info_general$user_follower) == TRUE, 0,
+                                             comment_info_general$user_follower)
+comment_info_general$timestamp_f <- as.POSIXlt(comment_info_general$timestamp, format = "%d. %b %Y,
+                                               %H:%M:%OS")
+comment_info_general$pinned_f <- as.integer(ifelse(comment_info_general$pinned == " Angeheftet ·",
+                                                   1, 0))
+comment_info_general$is_root_comment <- as.logical(comment_info_general$is_root_comment)
+comment_info_general$is_leaf_comment <- as.logical(comment_info_general$is_leaf_comment)
+comment_info_general$votes_pos <- as.integer(comment_info_general$votes_pos)
+comment_info_general$votes_neg <- as.integer(comment_info_general$votes_neg)
+
+#create new variables
+comment_info_general$votes_rel <- comment_info_general$votes_pos - comment_info_general$votes_neg
+
+#prep dataframes for function
+article_info$date <- gsub("T", " ", article_info$date)
+article_info$date_f <- as.POSIXlt(article_info$date, format = "%Y-%m-%d %H:%M")
+comment_info_general$order_all <- 1:nrow(comment_info_general)
+
+comment_article_merge <- merge(comment_info_general, article_info, by.x = "article", by.y = "url",
+                               sort = FALSE, suffixes = c(".comment",".article"))
+comment_article_merge <- comment_article_merge %>% arrange(order_all)
+
+# difference to published article (0 if comment before article edits)
+comment_article_merge$hours_since_article <- ifelse(as.numeric(-(comment_article_merge$date_f -
+                                                            comment_article_merge$timestamp_f)/(60*60)) < 0,
+                                                    0,
+                                                    as.numeric(-(comment_article_merge$date_f -
+                                                            comment_article_merge$timestamp_f)/(60*60)))
+
+
+nrow(comment_article_merge)
+
+
+article_url <- unique(comment_info_general$article)[1]
+
+names(comment_article_merge)
+
+get_feature_df <- function(article_url){
+  
+  # filter comments for given article
+  comment_info_d1 <- comment_article_merge %>% filter(article == article_url)
+  
+  # save order
+  comment_info_d1$order <- 1:nrow(comment_info_d1)
+  
+  # copy
+  comment_data <- comment_info_d1
+  
+  # direct root post
+  direct_root <- sapply(1:length(comment_data$level_in_tree), function(x) { 
+    if(x%%1000 == 0){
+      print(x)
+    }
+    if(comment_data$level_in_tree[x] != 0){
+      possible_root_indices <- which(comment_data$level_in_tree == as.numeric(comment_data$level_in_tree[x])-1)
+      return(comment_data$id[max(possible_root_indices[which(possible_root_indices<x)])])
+    } else {
+      return("")
+    }
+  })
+  comment_data$direct_root_id <- direct_root
+  
+  # tree size
+  tree_sizes_lookup <- comment_data %>% count(root_of_tree)
+  names(tree_sizes_lookup) <- c("root_of_tree", "size_of_tree")
+  comment_data_1 <- merge(comment_data, tree_sizes_lookup, by = "root_of_tree", all.x=TRUE, 
+                          sort = FALSE)
+  
+  # tree height
+  tree_heights_lookup <- comment_data %>% group_by(root_of_tree) %>% 
+    summarize(height_of_tree = max(level_in_tree))
+  comment_data_1 <- merge(comment_data_1, tree_heights_lookup, by = "root_of_tree", 
+                          all.x=TRUE, sort = FALSE)
+  
+  # sort correctly again
+  comment_data_1 <- comment_data_1 %>% arrange(order)
+  
+  # delete duplicates of pinned posts and deleted comments
+  pinned_indices <- which(comment_data_1$pinned_f == 1)
+  pinned_ids <- unique(comment_data$id[which(comment_data_1$pinned_f == 1)])
+  to_delete <- c()
+  for(i in 1:length(pinned_ids)){
+    print(i)
+    duplicate_indices <- which(comment_data_1$id == pinned_ids[i])
+    to_delete <- append(to_delete, duplicate_indices[which(duplicate_indices != pinned_indices[i])])
+  }
+  # delete by user deleted comments 
+  to_delete <- append(to_delete, which(comment_data_1$id == ""))
+  comment_data_1 <- comment_data_1 %>% filter(!row_number() %in% to_delete)
+  
+  to_delete <- c()
+  # delete remaining duplicates
+  df_duplicates <- comment_data_1 %>% group_by(id) %>% count() %>% filter(n > 1)
+  for(i in df_duplicates$id){
+    duplicate_index <- max(which(comment_data_1$id == df_duplicates$id))
+    to_delete <- append(to_delete, duplicate_index)
+  }
+  comment_data_1 <- comment_data_1 %>% filter(!row_number() %in% to_delete)
+  
+  ## FEATURES
+  # lexical diversity
+  # combine heading and text
+  comment_data_1$heading_and_text.comment <- paste0(comment_data_1$heading, " ",
+                                                    comment_data_1$text.comment)
+  comment_text_all <- data.frame(docid = comment_data_1$comment_id, 
+                                 text = paste0(comment_data_1$heading, " ",
+                                               comment_data_1$text.comment))
+  corpus <- corpus(comment_text_all,   docid_field = "doc_id",  text_field = "text", 
+                   meta = list(),unique_docnames = TRUE)
+  tokens <- corpus %>% 
+    tokens(what="word", remove_punct = TRUE, remove_numbers = TRUE) %>% 
+    tokens_remove(stopwords("de")) %>% 
+    tokens_wordstem()
+  dfm <- dfm(tokens)
+  if(length(dfm) < 2){
+    comment_data_1$lexdiv_cttr <- NA
+  } else {
+    comment_data_1$lexdiv_cttr <- as.vector(textstat_lexdiv(dfm, c("CTTR"))[2])$CTTR
+  }
+  
+  # punctuation
+  comment_data_1$num_punct <- str_count(comment_data_1$heading_and_text.comment, "\\p{P}")
+  
+  # relevance - word vector similarity vs article
+  article_text <- paste0(comment_data_1$title[1], " ", comment_data_1$subtitle[1], " ", 
+                         comment_data_1$text.article[1])
+  documents <- c(article_text, comment_data_1$heading_and_text) 
+  
+  doc_names <- c("article", comment_data_1$comment_id)
+  corpus <- corpus(documents, docnames = doc_names)
+  tokens <- corpus %>% 
+    tokens(what="word", remove_punct = TRUE, remove_numbers = TRUE) %>% 
+    tokens_remove(stopwords("de")) %>% 
+    tokens_wordstem()
+  dfm <- dfm(tokens) %>% dfm_trim(min_termfreq = 2) %>% dfm_tfidf()
+  similarities_1 <- textstat_simil(dfm, method="cosine")
+  comment_data_1$cosine_1 <- as.vector(similarities_1[1,-1])
+  
+  # AMOUNT
+  # num of words
+  # splitting a string by spaces
+  split <- strsplit(comment_data_1$heading_and_text.comment, " ")
+  comment_data_1$num_words <- sapply(split, length)
+  
+  # num of sentences
+  comment_data_1$num_sentences <- nsentence(comment_data_1$heading_and_text.comment)
+  
+  # number of characters
+  comment_data_1$num_char <- nchar(comment_data_1$heading_and_text.comment)
+  
+  # characters-to-sentences ratio
+  comment_data_1$char_to_sent <- comment_data_1$num_char/comment_data_1$num_sentences
+  
+  # words-to-sentences ratio
+  comment_data_1$word_to_sent <- comment_data_1$num_words/comment_data_1$num_sentences
+  
+  # readability (i.e., the SMOG standard index of reading grade level)
+  corpus <- corpus(comment_data_1, text_field="heading_and_text.comment")
+  comment_data_1$SMOG_readability <- unlist(as.vector(textstat_readability(corpus, measure = "SMOG.de")[2]))
+  
+  # number of unique words
+  comment_data_1$num_words_unique <- sapply(list(sapply(split, unique)), length)
+  
+  # REPRESENTATIVE QUALITY
+  
+  # tagging or referencing other users
+  comment_data_1$second_person <- grepl("\\b(Du|Sie|du)\\b", comment_data_1$heading_and_text.comment)
+  
+  # num of direct replies
+  df_replies <- comment_data_1 %>% group_by(root_of_tree) %>% count() %>% arrange(desc(n))
+  df_replies$all_replies <- df_replies$n -1
+  df_replies <- df_replies[,c(1,3)]
+  comment_data_1 <- merge(comment_data_1, df_replies, by.x = "comment_id", by.y = "root_of_tree", all.x = TRUE,
+                          sort = FALSE)
+  comment_data_1 <- comment_data_1 %>% arrange(order)
+  
+  return(comment_data_1)
+}
+
+
+#test
+comment_data_a <- get_feature_df(article_links_clean[14])
+View(comment_data_a)
+
+```
+
+##Features for all comments
+```{r}
+nrow(comment_info_general)
+length(unique(comment_info_general$article)) # 5874 articles
+
+# create empty dataframe comment_data
+comment_data <- data.frame(matrix(nrow = 0, ncol = length(colnames(comment_data_a))))
+colnames(comment_data) <- colnames(comment_data_a)
+
+# fill for each article
+for(i in unique(comment_info_general$article)){
+  print(i)
+  print(which(unique(comment_info_general$article) == i))
+  comment_data_a <- get_feature_df(i)
+  comment_data <- rbind(comment_data, comment_data_a)
+}
+
+# error at 4244: "/story/2000139719421/ein-nobelpreis-weist-den-weg": Warning: no non-missing arguments to max; returning -InfWarning: no non-missing arguments to max; returning -InfWarning: no non-missing arguments to max; returning -InfError in corpus.character(documents, docnames = doc_names) : docnames must be unique
+# error at 5021: Error in corpus.character(documents, docnames = doc_names) :   docnames must be unique
+# DONE at 5874
+
+
+comment_data_general <- data.frame(comment_data)
+
+# 2. safety copy
+write.csv(comment_data_general, "comment_data_general_091022_untilarticle5874.csv")
+
+nrow(comment_data_general)
+nrow(comment_info_general)
+
+length(unique(comment_info_general$article))
+length(unique(comment_data_general$article))
+
+```
+
+```{r}
+comment_data_general <- read.csv("comment_data_general_091022_untilarticle5874.csv")
+head(comment_data_general)
+comment_data_general <- comment_data_general[,-1]
+```
+
+# Data check
+```{r}
+for(i in 1:ncol(comment_data_general)){
+  print(i)
+  print(colnames(comment_data_general)[i])
+  
+  print(head(comment_data_general[,i]))
+  print(summary(comment_data_general[,i]))
+}
+
+# change month names to english
+comment_data_general$timestamp <- gsub("Jänner", "January", comment_data_general$timestamp)
+comment_data_general$timestamp <- gsub("Februar", "February", comment_data_general$timestamp)
+comment_data_general$timestamp <- gsub("März", "March", comment_data_general$timestamp)
+comment_data_general$timestamp <- gsub("Mai", "May", comment_data_general$timestamp)
+comment_data_general$timestamp <- gsub("Juni", "June", comment_data_general$timestamp)
+comment_data_general$timestamp <- gsub("Juli", "July", comment_data_general$timestamp)
+comment_data_general$timestamp <- gsub("Oktober", "October", comment_data_general$timestamp)
+comment_data_general$timestamp <- gsub("Dezember", "December", comment_data_general$timestamp)
+
+# re-do formatting of timestamp
+comment_data_general$timestamp_f <- as.POSIXlt(comment_data_general$timestamp, format = "%d. %b %Y,
+                                               %H:%M:%OS")
+comment_data_general$date_f <- as.POSIXlt(comment_data_general$date_f, format = "%Y-%m-%d %H:%M")
+
+# re-do calc of hours since article
+comment_data_general$hours_since_article <- ifelse(as.numeric(-(comment_data_general$date_f - comment_data_general$timestamp_f)/(60*60)) < 0,
+       0,
+       as.numeric(-(comment_data_general$date_f - comment_data_general$timestamp_f)/(60*60)))
+
+# lexdiv: NAs are very few words, URLs, etc. -> set to zero
+comment_data_general$lexdiv_cttr <- ifelse(is.na(comment_data_general$lexdiv_cttr) == TRUE, 0, comment_data_general$lexdiv_cttr)
+
+# cosine: NAs are very few words, URLs, etc. -> set to zero
+comment_data_general$cosine_1 <- ifelse(is.na(comment_data_general$cosine_1) == TRUE, 0, comment_data_general$cosine_1)
+
+# SMOG: NAs are just smileys, punctuation. -> set to minimum, i.e. -2
+comment_data_general$SMOG_readability <- ifelse(is.na(comment_data_general$SMOG_readability) == TRUE, -2, comment_data_general$SMOG_readability)
+
+# re-calculate number of unique words for all discussions at once
+split <- strsplit(comment_data_general$heading_and_text.comment, " ")
+comment_data_general$num_words_unique <- sapply(sapply(split, unique), length)
+
+# all replies: NAs are comments without any replies, so setting to zero
+comment_data_general$all_replies <- ifelse(is.na(comment_data_general$all_replies) == TRUE, 0, comment_data_general$all_replies)
+
+# safety copy
+write.csv(comment_data_general, "comment_data_general_091022_untilarticle5874_corrected.csv")
+
+names(comment_data_general)
+```
+
+```{r}
+comment_data_general <- read.csv("comment_data_general_091022_untilarticle5874_corrected.csv")
+head(comment_data_general)
+comment_data_general <- comment_data_general[,-1]
+
+```
+
+
+##Add sentiment feature
+```{r}
+#subset_sentiment <- comment_data_general$heading_and_text.comment
+#write.csv(subset_sentiment, "comment_data_general_091022_untilarticle5874_sentiment_subset.csv")
+
+
+sentiment_class <- read.csv("output_classes.csv")
+nrow(sentiment_class)
+comment_data_general$sentiment_class <- sentiment_class
+
+sentiment_probs <- read.csv("output_probs.csv")
+head(sentiment_probs)
+colnames(sentiment_probs) <- c("positive", "negative", "neutral")
+
+sentiment_probs$positive_f <- as.numeric(substring(sentiment_probs$positive, 14, nchar(sentiment_probs$positive) -1))
+sentiment_probs$negative_f <- as.numeric(substring(sentiment_probs$negative, 14, nchar(sentiment_probs$negative) -1))
+sentiment_probs$neutral_f <- as.numeric(substring(sentiment_probs$neutral, 13, nchar(sentiment_probs$neutral) -1))
+
+comment_data_general$sentiment_prob_pos <- sentiment_probs$positive_f
+comment_data_general$sentiment_prob_neg <- sentiment_probs$negative_f
+comment_data_general$sentiment_prob_neu <- sentiment_probs$neutral_f
+
+
+# safety copy
+#write.csv(comment_data_general, "comment_data_general_091022_untilarticle5874_final.csv")
+
+
+```
+
+
+
+
+#Exploratory Analysis
+
+##Correlations
+
+```{r, fig.height=11, fig.width=11}
+library(psych)
+
+names(comment_data_general)
+
+# removed due to collinearity: "num_words_unique","char_to_sent","num_char", 
+
+comment_data_general_features <- comment_data_general[,c("pinned_f", "votes_pos", "votes_neg",
+                                                         
+                                                         "is_root_comment", "is_leaf_comment", "level_in_tree", 
+                                                         "size_of_tree", "height_of_tree", 
+                                                         
+                                                         "sentiment_prob_pos", "sentiment_prob_neg", "sentiment_prob_neu",
+                                                         
+                                                           "hours_since_article", 
+                                                           "lexdiv_cttr", "num_punct", "cosine_1", 
+                                                           "num_words", "num_sentences", 
+                                                           "word_to_sent", "SMOG_readability", 
+                                                           "user_follower", "second_person", "all_replies")]
+
+df_cor <- data.frame(cor(comment_data_general_features))
+
+# If you want to preserve the original structure
+filtered_data <- df_cor
+filtered_data[abs(df_cor) <= 0.5] <- NA
+
+
+# outcome variables
+
+
+pairs.panels(comment_data_general_features[,1:4])
+
+# input variables
+pairs.panels(comment_data_general_features[,5:ncol(comment_data_general_features)])
+mean(comment_data_general_features$pinned_f)
+
+comment_data_general_features$pinned_f <- as.logical(comment_data_general_features$pinned_f)
+
+# output variables by Pinned status
+p_pinned_votes_pos <- ggplot(comment_data_general_features, aes(x = pinned_f, y = log(votes_pos), group = pinned_f, fill = pinned_f)) + 
+  geom_boxplot() +
+  theme_minimal() +
+  theme(axis.title.x = element_blank(),
+        legend.position = "none") +
+  scale_x_discrete(labels = c("not pinned", "pinned")) +
+  ylab("log of positive votes") +
+  labs(title = "Positive votes by pinned status")
+
+p_pinned_votes_neg <- ggplot(comment_data_general_features, aes(x = pinned_f, y = log(votes_neg), group = pinned_f,  fill = pinned_f)) + 
+  geom_boxplot() +
+  theme_minimal() +
+  theme(axis.title.x = element_blank(),
+        legend.position = "none") +
+  scale_x_discrete(labels = c("not pinned", "pinned")) +
+  ylab("log of negative votes") +
+  labs(title = "Negative votes by pinned status")
+
+p_pinned_votes_rel <- ggplot(comment_data_general_features, aes(x = pinned_f, y = votes_rel, group = pinned_f,  fill = pinned_f)) + 
+  geom_boxplot() +
+  theme_minimal() +
+  theme(axis.title.x = element_blank(),
+        legend.position = "none") +
+  scale_x_discrete(labels = c("not pinned", "pinned")) +
+  ylab("relative votes") +
+  labs(title = "Relative votes by pinned status")
+
+
+# input variables by Pinned status
+p_pinned_lexdiv <- ggplot(comment_data_general_features, aes(x = pinned_f, y = lexdiv_cttr, group = pinned_f, fill = pinned_f)) + 
+  geom_boxplot() +
+  scale_x_discrete(labels = c("not pinned", "pinned")) +
+  theme_minimal() +
+  theme(axis.title.x = element_blank(),
+        legend.position = "none") +
+  ylab("Lexical diversity") +
+  labs(title = "Lexical diversity by pinned status")
+
+p_pinned_smog <- ggplot(comment_data_general_features, aes(x = pinned_f, y = SMOG_readability, group = pinned_f, fill = pinned_f)) + 
+  geom_boxplot() +
+  scale_x_discrete(labels = c("not pinned", "pinned")) +
+  theme_minimal() +
+  theme(axis.title.x = element_blank(),
+        legend.position = "none") +
+  ylab("SMOG readability") +
+  labs(title = "SMOG readability by pinned status")
+
+p_pinned_cosine <- ggplot(comment_data_general_features, aes(x = pinned_f, y = cosine_1, group = pinned_f, fill = pinned_f)) + 
+  geom_boxplot() +
+  scale_x_discrete(labels = c("not pinned", "pinned")) +
+  theme_minimal() +
+  theme(axis.title.x = element_blank(),
+        legend.position = "none") +
+  ylab("Cosine similarity") +
+  labs(title = "Topical relevance by pinned status")
+
+p_pinned_sent_pos <- ggplot(comment_data_general_features, aes(x = pinned_f, y = log(sentiment_prob_pos), group = pinned_f, fill = pinned_f)) + 
+  geom_boxplot() +
+  scale_x_discrete(labels = c("not pinned", "pinned")) +
+  theme_minimal() +
+  theme(axis.title.x = element_blank(),
+        legend.position = "none") +
+  ylab("log of positive sentiment BERT") +
+  labs(title = "Positive sentiment by pinned status")
+
+p_pinned_sent_neg <- ggplot(comment_data_general_features, aes(x = pinned_f, y = log(sentiment_prob_neg), group = pinned_f, fill = pinned_f)) + 
+  geom_boxplot() +
+  scale_x_discrete(labels = c("not pinned", "pinned")) +
+  theme_minimal() +
+  theme(axis.title.x = element_blank(),
+        legend.position = "none") +
+  ylab("log of negative sentiment BERT") +
+  labs(title = "Negative sentiment by pinned status")
+
+p_pinned_sent_neu <- ggplot(comment_data_general_features, aes(x = pinned_f, y = log(sentiment_prob_neu), group = pinned_f, fill = pinned_f)) + 
+  geom_boxplot() +
+  scale_x_discrete(labels = c("not pinned", "pinned")) +
+  theme_minimal() +
+  theme(axis.title.x = element_blank(),
+        legend.position = "none") +
+  ylab("log of neutral sentiment BERT") +
+  labs(title = "Neutral sentiment by pinned status")
+
+p_pinned_num_words <- ggplot(comment_data_general_features, aes(x = pinned_f, y = num_words, group = pinned_f, fill = pinned_f)) + 
+  geom_boxplot() +
+  scale_x_discrete(labels = c("not pinned", "pinned")) +
+  theme_minimal() +
+  theme(axis.title.x = element_blank(),
+        legend.position = "none") +
+  ylab("number of words") +
+  labs(title = "Comment length by pinned status")
+
+names(comment_data_general_features)
+
+library(gridExtra)
+grid.arrange(p_pinned_votes_pos, p_pinned_votes_neg, p_pinned_votes_rel,
+             p_pinned_lexdiv, p_pinned_smog, p_pinned_cosine, 
+             p_pinned_sent_pos, p_pinned_sent_neu, p_pinned_sent_neg,
+             
+             nrow = 3)
+
+```
+
+
+
+
+
+
+
+###Corr - pos votes
+```{r}
+# input variables BY POSITIVE user votes
+p_votespos_lexdiv <- ggplot(comment_data_general_features, aes(x = votes_pos, y = lexdiv_cttr)) + 
+  geom_point(color = "#009292") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  xlab("Positive votes") +
+  ylab("Lexical diversity") +
+  labs(title = "Lexical diversity by positive votes")
+
+p_votespos_smog <- ggplot(comment_data_general_features, aes(x = votes_pos, y = SMOG_readability)) + 
+  geom_point(color = "#009292") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  xlab("Positive votes") +
+  ylab("SMOG readability") +
+  labs(title = "Readability by positive votes")
+
+p_votespos_cosine <- ggplot(comment_data_general_features, aes(x = votes_pos, y = cosine_1)) + 
+  geom_point(color = "#009292") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  xlab("Positive votes") +
+  ylab("Cosine similarity") +
+  labs(title = "Topical relevance by positive votes")
+
+p_votespos_num_words <- ggplot(comment_data_general_features, aes(x = votes_pos, y = num_words)) + 
+  geom_point(color = "#009292") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  xlab("Positive votes") +
+  ylab("number of words") +
+  labs(title = "Comment length by positive votes")
+
+
+grid.arrange(p_votespos_smog, p_votespos_cosine, p_votespos_lexdiv, p_votespos_num_words,
+             nrow = 2)
+
+```
+
+
+
+###Corr - neg votes
+```{r}
+# input variables BY NEGATIVE user votes
+p_votesneg_lexdiv <- ggplot(comment_data_general_features, aes(x = votes_neg, y = lexdiv_cttr)) + 
+  geom_point(color = "#009292") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  xlab("Negative votes") +
+  ylab("Lexical diversity") +
+  labs(title = "Lexical diversity by negative votes")
+
+p_votesneg_smog <- ggplot(comment_data_general_features, aes(x = votes_neg, y = SMOG_readability)) + 
+  geom_point(color = "#009292") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  xlab("Negative votes") +
+  ylab("SMOG readability") +
+  labs(title = "Readability by negative votes")
+
+p_votesneg_cosine <- ggplot(comment_data_general_features, aes(x = votes_neg, y = cosine_1)) + 
+  geom_point(color = "#009292") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  xlab("Negative votes") +
+  ylab("Cosine similarity") +
+  labs(title = "Topical relevance by negative votes")
+
+p_votesneg_num_words <- ggplot(comment_data_general_features, aes(x = votes_neg, y = num_words)) + 
+  geom_point(color = "#009292") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  xlab("Negative votes") +
+  ylab("number of words") +
+  labs(title = "Comment length by negative votes")
+
+
+grid.arrange(p_votesneg_smog, p_votesneg_cosine, p_votesneg_lexdiv, p_votesneg_num_words,
+             nrow = 2)
+
+```
+
+
+##Genres
+```{r}
+nrow(comment_data_general)/length(unique(comment_data_general$article))
+
+article_genres <- article_info %>% group_by(genre1) %>% count() %>% arrange(desc(n))
+
+article_genres$genre1_eng <- c("international", "sports", "digital", "culture", "media industry", 
+                               "human interest", "domestic", "economy", "lifestyle", "opinion",
+                               "science", "video", "podcast", "legal", "women's policy")
+
+# comments by genre
+df_help3 <- comment_data_general %>% group_by(article) %>% count()
+df_help3 <- merge(df_help3, article_info, by.x="article", by.y = "url")
+comment_genres <- df_help3 %>% group_by(genre1) %>% summarise(n_comments = sum(n)) %>% arrange(desc(n_comments))
+
+article_genres <- merge(article_genres, comment_genres)
+
+colnames(article_genres) <- c("genre1", "articles", "genre1_eng", "comments")
+
+article_genres$articles_ <- article_genres$articles * 100
+
+article_genres$comments_per_article <- article_genres$comments/article_genres$articles
+article_genres$comments_per_article_ <- article_genres$comments_per_article * 10
+
+# pivot longer for plotting
+article_genres_long <- article_genres %>% pivot_longer(cols = c("articles_", "comments"), names_to = "entity", values_to = "values")
+
+ggplot(data = article_genres_long, aes(x = reorder(genre1_eng, -values), y = values)) +
+  geom_bar(stat = "identity", aes(fill = entity), position = "dodge") +
+  ylab("Number of articles") +
+  xlab("Genre") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90)) +
+  labs(title = "Article discussions and comments by genre") +
+  scale_y_continuous(
+    
+    # Features of the first axis
+    name = "Number of comments",
+    
+    # Add a second axis and specify its features
+    sec.axis = sec_axis(~.*0.01, name="Number of articles", labels = scales::comma),
+    
+    
+    labels = scales::comma
+  )
+
+
+ggplot(data = article_genres, aes(x = reorder(genre1_eng, -articles))) +
+  geom_bar(aes(y = articles), stat = "identity", fill = "#6db6ff") +
+  geom_point(aes(y = comments_per_article * 2), stat = "identity", color = "#004949") +
+  geom_text(aes(y = comments_per_article * 2, label = scales::comma(comments_per_article)), 
+            vjust = -0.5) +
+  ylab("Number of articles") +
+  xlab("Genre") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90)) +
+  labs(title = "Articles and average number of comments by genre") +
+  scale_y_continuous(labels = scales::comma, 
+                     # Features of the first axis
+    name = "Number of articles",
+    
+    # Add a second axis and specify its features
+    sec.axis = sec_axis(~.*0.5, name="Comments per article", labels = scales::comma)
+    )
+
+
+
+c("#000000","#004949","#009292","#ff6db6","#ffb6db",
+ "#490092","#006ddb","#b66dff","#6db6ff","#b6dbff",
+ "#920000","#924900","#db6d00","#24ff24","#ffff6d")
+
+
+```
+
+
+##Comments
+```{r}
+comment_data_general$votes_neg <- as.integer(comment_data_general$votes_neg)
+comment_data_general$votes_pos <- as.integer(comment_data_general$votes_pos)
+comment_data_general$votes_total <- comment_data_general$votes_pos + comment_data_general$votes_neg
+comment_data_general$pinned_f <- as.logical(comment_data_general$pinned_f)
+
+# votes summary
+summary(comment_data_general$votes_pos)
+summary(comment_data_general$votes_neg)
+
+# how many comments have at least one vote -> 91.6%
+summary(comment_data_general$votes_total)
+length(which(comment_data_general$votes_total > 0))/nrow(comment_data_general)
+
+# how many articles have pinned comments -> only 25.17% of articles have pinned comments
+df_help1 <- comment_data_general %>% group_by(article) %>% summarise(pinned = mean(pinned_f), votes_total = sum(votes_pos, votes_neg), votes_total_mean = mean(votes_total))
+length(which(df_help1$pinned == 0))/nrow(df_help1)
+
+# but articles with pinned comments have much more comments: 551 vs 90. 
+# And 67% of all comments are in discussions with pinned comments
+df_help2 <- comment_data_general %>% group_by(article) %>% count()
+df_help <- merge(df_help1, df_help2)
+df_help$pin_binary <- ifelse(df_help$pinned != 0, 1, 0)
+df_help$votes_mean <- df_help$votes_total / df_help$n
+df_help %>% group_by(pin_binary) %>% summarise(comments = mean(n), sum_c = sum(n), votes_mean = mean(votes_mean))
+df_help %>% group_by(pin_binary) %>% count()
+
+812088 / nrow(comment_data_general)
+
+length(unique(comment_data_general$article)) - 1511
+
+# average length of comments
+mean(comment_data_general$num_words)
+mean(comment_data_general$num_char)
+mean(comment_data_general$num_sentences)
+mean(comment_data_general$is_root_comment)
+df_help4 <- comment_data_general %>% group_by(level_in_tree) %>% count()
+df_help4$prop <- df_help4$n/nrow(comment_data_general)
+
+```
+
+
+#Overlap - Jaccard
+```{r, fig.width= 5, fig.height= 5}
+
+# on avg 4 comments pinned 
+num_pinned <- comment_data_general %>% group_by(article) %>% filter(pinned_f == 1) %>% summarise(pinned_comments = n())
+summary(num_pinned$pinned_comments)
+
+
+# Jaccard
+jaccard <- function(a, b) {
+    intersection = length(intersect(a, b))
+    union = length(a) + length(b) - intersection
+    return (intersection/union)
+}
+
+j_user_editor <- c()
+j_user_r_editor <- c()
+j_user_user_r <- c()
+
+
+#for each discussion
+for(i in 1:length(unique(comment_data_general$article))){
+  
+  print(i)
+  
+  a <- unique(comment_data_general$article)[[i]]
+  
+  # check if discussion has pinned comments
+  if(a %in% num_pinned$article){
+    
+    # get number of pinned comments
+    num_pin_c <- num_pinned$pinned_comments[which(num_pinned$article == a)]
+    
+    # find comment ids of editor picks
+    editor_picks <- comment_data_general %>% filter(article == a) %>% filter(pinned_f == 1) %>% select(comment_id = comment_id)
+    editor_picks <- c(editor_picks$comment_id)
+    
+    # top 4 readers picks (most green)
+    top_uservotes <- comment_data_general %>% filter(article == a) %>% arrange(desc(votes_pos)) %>% slice_head(n = num_pin_c) %>% 
+      select(comment_id = comment_id)
+    top_uservotes <- c(top_uservotes$comment_id)
+    
+    # top 4 readers picks (relative)
+    top_uservotes_r <- comment_data_general %>% filter(article == a) %>% arrange(desc(votes_rel)) %>% slice_head(n = num_pin_c) %>% 
+      select(comment_id = comment_id)
+    top_uservotes_r <- c(top_uservotes_r$comment_id)
+    
+    
+      j_user_editor <- append(j_user_editor, jaccard(top_uservotes, editor_picks))
+      j_user_r_editor <- append(j_user_r_editor, jaccard(top_uservotes_r, editor_picks))
+      j_user_user_r <- c(j_user_user_r, jaccard(top_uservotes, top_uservotes_r))
+    
+    
+    
+  } else {next}
+  
+}
+
+length(j_user_editor)
+
+mean(j_user_editor)
+mean(j_user_r_editor)
+mean(j_user_user_r)
+
+
+
+# editors picks
+top_editors <- comment_data_1$comment_id[which(comment_data_1$pinned_f == 1)]
+
+# top 10 readers picks (most green)
+top_users <- comment_data_1 %>% arrange(desc(votes_pos))
+top_users <- top_users$comment_id[1:10]
+
+# top 10 readers picks (best ratio)
+top_users_r <- comment_data_1 %>% arrange(desc(votes_rel))
+top_users_r <- top_users_r$comment_id[1:10]
+
+# Jaccard
+jaccard <- function(a, b) {
+    intersection = length(intersect(a, b))
+    union = length(a) + length(b) - intersection
+    return (intersection/union)
+}
+
+jaccard(top_users, top_editors)
+jaccard(top_users_r, top_editors)
+jaccard(top_users, top_users_r)
+
+# % of editors picks also popular with users (absolute top 10)
+length(intersect(top_users, top_editors))/length(top_editors)*100
+
+# % of editors picks also popular with users (relative top 10)
+length(intersect(top_users_r, top_editors))/length(top_editors)*100
+
+# % of users favorites also picked by editors (top 10)
+length(intersect(top_users, top_editors))/length(top_users)*100
+
+# % of users favorites also picked by editors (top 10, relative)
+length(intersect(top_users, top_editors))/length(top_users_r)*100
+
+
+
+comment_data_general %>% group_by(pinned_f) %>% summarise(comments = n(), votes_pos = mean(votes_pos), votes_neg = mean(votes_neg))
+
+df_help5_pos <- data.frame(pinned = comment_data_general$votes_pos[which(comment_data_general$pinned_f == 1)], 
+                       not_pinned = comment_data_general$votes_pos[which(comment_data_general$pinned_f == 0)])
+
+
+boxplot(comment_data_general$votes_pos[which(comment_data_general$pinned_f == 1)], comment_data_general$votes_pos[which(comment_data_general$pinned_f == 0)])
+
+
+
+  
+
+
+```
+
+
+
+#RQ1.2 - editors' picks
+
+##logistic regression editors picks
+```{r}
+
+comment_data_general_1 <- comment_data_general
+
+# scale sentiment values by 100
+comment_data_general_1$sentiment_prob_pos <- comment_data_general_1$sentiment_prob_pos * 100
+comment_data_general_1$sentiment_prob_neg <- comment_data_general_1$sentiment_prob_neg * 100
+comment_data_general_1$sentiment_prob_neu <- comment_data_general_1$sentiment_prob_neu * 100
+comment_data_general_1$cosine_1 <- comment_data_general_1$cosine_1 * 100
+
+
+summary(comment_data_general$cosine_1)
+
+# Estimation
+model1_2 <-  glm(pinned_f ~
+                   # intrinsic quality
+                   sentiment_prob_pos + sentiment_prob_neg + #sentiment_prob_neu +
+                   lexdiv_cttr + num_punct +
+                   num_sentences + #num_words + 
+                   SMOG_readability + #word_to_sent + 
+                         
+                   # contextual quality
+                   cosine_1 +
+                   hours_since_article +
+                   is_leaf_comment + 
+                   #is_root_comment + level_in_tree  # -> excluded due to high correlation
+                   size_of_tree + height_of_tree  +
+                         
+                   # representational quality
+                   all_replies + second_person + user_follower + votes_pos + votes_neg
+                         
+                 ,
+                
+               data = comment_data_general_1, 
+               family = binomial , 
+               maxit = 100
+               )
+
+summary(model1_2)
+
+# Install and load the sjstats package if needed
+install.packages("pscl")
+library(pscl)
+
+# Compute Pseudo R-squared
+pR2(model1_2)
+
+####
+deviance_result <- anova(model1_2, test = "Chisq")
+print(deviance_result)
+
+
+library(broom)
+
+summary_df <- tidy(model1_2)
+
+# Rename columns and add additional columns if desired
+summary_df <- summary_df %>%
+  rename(Coefficient = term, Estimate = estimate, Std.Error = std.error,
+         t.value = statistic, p.value = p.value)
+
+View(summary_df)
+
+
+summary_df$value_formatted <- paste0(round(summary_df$Estimate, 4), " (", round(summary_df$Std.Error, 4), ")")
+
+summary(comment_data_general_1$lexdiv_cttr)
+
+```
+
+
+## with training and test datasets
+```{r}
+# class balance
+mean(comment_data_general$pinned_f) # 0.5% are pinned, 99.5% are not pinned
+
+# nested data? stratified? -> mixed-effects logistic regression model, e.g. glmer() function from the lme4 package
+
+
+# Indices of training, validation, and test observations 
+all_indices <- 1:nrow(comment_features_4)
+all_indices <- sample(all_indices) #randomise
+
+training_indices <- all_indices[1:round(length(all_indices)*0.6,0)] # 60% 
+validation_indices <- all_indices[round(length(all_indices)*0.6,0):round(length(all_indices)*0.8,0)] # 20%
+test_indices <- all_indices[round(length(all_indices)*0.8,0):length(all_indices)] # 20%
+
+# Y
+# Dataset split
+training_y <- comment_features_4[training_indices,22]
+training_dataset <- comment_features_4[training_indices,]
+test_y <- as.vector(comment_features_4[test_indices,22]) 
+test_X <- comment_features_4[test_indices,-22]
+
+# Making the label a factor for the randomForest package
+training_dataset$pinned_f <- factor(training_dataset$pinned_f)
+test_y <- factor(test_y)
+
+# Estimation
+model1_2 <-  glm(pinned_f ~
+                   # intrinsic quality
+                         word_to_sent + SMOG_readability + num_words_unique +  #char_to_sent + 
+                         lexdiv_cttr + num_punct +
+                         num_words + num_sentences + num_char + 
+                         #sentiment +
+                         
+                         # contextual quality
+                         is_root_comment + is_leaf_comment + size_of_tree + height_of_tree + level_in_tree +
+                         cosine_1 +
+                         hours_since_article +
+                         #normalised sentiment? +
+                   
+                         # representational quality
+                         user_follower + votes_pos + votes_neg + all_replies + #total_votes?
+                         
+                         # other
+                         genre1
+                 ,
+                
+               data = training_dataset, #comment_data_general, 
+               family = binomial #, 
+               #maxit = 100
+               )
+
+summary(model1_2)
+
+# Prediction
+test_y_hat_prob_rf <-  predict(model1_2, newdata = test_X, type="response")
+predicted_probabilities <- predict(model1_2, newdata = test_X, type = "response")
+test_y_hat_rf <- as.factor(as.logical(ifelse(predicted_probabilities >= 0.5, 1, 0)))
+
+# Confusion matrix
+confm <- confusionMatrix(data = test_y, reference = test_y_hat_rf, positive = "TRUE", mode = "everything")
+
+# AUC
+auc(roc(test_y, test_y_hat_prob_rf))
+
+```
+
+
+
+
+##Excursion: pinned comments
+```{r}
+# die wievielten kommentare in der diskussion werden gepinnt?
+# subset of only discussions with pinned comments
+df_help6 <- comment_data_general %>% group_by(article) %>% summarise(pinned_mean = mean(pinned_f)) %>% filter(pinned_mean > 0)
+comment_data_general_pinned <- comment_data_general[which(comment_data_general$article %in% df_help6$article),]
+
+pinned_rank_percent <- c()
+
+# loop through discussions
+for(i in unique(comment_data_general_pinned$article)){
+  
+  print(which(unique(comment_data_general_pinned$article) == i))
+  
+  df_subset <- comment_data_general_pinned[which(comment_data_general_pinned$article == i),]
+  
+  # sort by time published
+  df_subset <- df_subset %>% arrange(timestamp)
+  
+  # find number of comments
+  num_comments <- nrow(df_subset)
+  
+  # find pinned comments rank
+  pinned_indices <- which(df_subset$pinned_f==TRUE)
+  
+  #mean percentile
+  pinned_rank_percent <- append(pinned_rank_percent, pinned_indices/num_comments)
+}
+
+hist(pinned_rank_percent, breaks = 100)
+
+length(unique(comment_data_general_pinned$article))
+
+ggplot(data = data.frame(pinned_rank_percent*100)) +
+  geom_histogram(aes(x=pinned_rank_percent*100), bins = 100, fill = "#009292") +
+  theme_minimal() +
+  xlab("percentile of discussion, chronological") +
+  labs(title = "Distribution of chronological rank of pinned comments", 
+       subtitle = "1,511 discussions containing pinned comments")
+
+
+
+```
+
+
+#GRAPHS
+
+## bar chart feature importance
+```{r, fig.width= 8, fig.height= 4}
+
+featimp_pos <- read.csv("feat_imp_votespos.csv")
+featimp_neg <- read.csv("feat_imp_votesneg.csv")
+featimp_pin <- read.csv("feat_imp_pinned.csv")
+
+featimp_pos <- featimp_pos[,-1]
+featimp_neg <- featimp_neg[,-1]
+featimp_pin <- featimp_pin[,-1]
+
+df_long <- featimp_pos %>% 
+  pivot_longer(-Feature)
+
+p_pos <- ggplot(data = df_long, aes(x=value,y=Feature)) +
+  
+  geom_line(aes(group=Feature), color="#E7E7E7", linewidth=3.5) + 
+  # note that linewidth is a little larger than the point size 
+  # so that the line matches the height of the point. why is it 
+  # like that? i don't really know
+  
+  geom_point(aes(color=name), size=3) +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+    axis.text.y = element_text(color="black"),
+        axis.text.x = element_text(color="#989898"),
+        axis.title = element_blank()
+        ) +
+  scale_color_manual(values=c("#004949", "#b6dbff"))+
+  #scale_x_continuous(labels = scales::percent_format(scale = 1)) +
+    labs(title = "Feature importance", subtitle = "positive votes",color=NULL)
+  
+  
+  
+df_long <- featimp_neg %>% 
+  pivot_longer(-Feature)
+
+p_neg <- ggplot(data = df_long, aes(x=value,y=Feature)) +
+  
+  geom_line(aes(group=Feature), color="#E7E7E7", linewidth=3.5) + 
+  # note that linewidth is a little larger than the point size 
+  # so that the line matches the height of the point. why is it 
+  # like that? i don't really know
+  
+  geom_point(aes(color=name), size=3) +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+    axis.text.y = element_text(color="black"),
+        axis.text.x = element_text(color="#989898"),
+        axis.title = element_blank()
+        ) +
+  scale_color_manual(values=c("#004949", "#b6dbff"))+
+  #scale_x_continuous(labels = scales::percent_format(scale = 1)) +
+    labs(title = " ", subtitle = "negative votes", color=NULL)
+
+
+
+  c("#000000","#004949","#009292","#ff6db6","#ffb6db",
+ "#490092","#006ddb","#b66dff","#6db6ff","#b6dbff",
+ "#920000","#924900","#db6d00","#24ff24","#ffff6d")
+  
+library(gridExtra)
+grid.arrange(p_pos, p_neg,
+             
+             nrow = 1)
+
+
+# pin
+
+df_long <- featimp_pin %>% 
+  pivot_longer(-Feature)
+
+p_pin <- ggplot(data = df_long, aes(x=value,y=Feature)) +
+  
+  geom_line(aes(group=Feature), color="#E7E7E7", linewidth=3.5) + 
+  # note that linewidth is a little larger than the point size 
+  # so that the line matches the height of the point. why is it 
+  # like that? i don't really know
+  
+  geom_point(aes(color=name), size=3) +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+    axis.text.y = element_text(color="black"),
+        axis.text.x = element_text(color="#989898"),
+        axis.title = element_blank()
+        ) +
+  scale_color_manual(values=c("#004949", "#b6dbff"))+
+  #scale_x_continuous(labels = scales::percent_format(scale = 1)) +
+    labs(title = "Feature importance", subtitle = "pinned",color=NULL)
+
+```
+
