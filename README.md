@@ -9,5 +9,7 @@ Candidate number: 43231
 * 02_Code: 1) Python file for Random Forest models and negative binomial regression due to better GPU
 * 02_Code: 2) R file for feature selection and logistic regression model
 * 03_Code: used for analysing sorting policies
+* 04_Code: used for beta regression model for FORUM score
+* 05_Code: used for creating figures and tables for the article
 
 

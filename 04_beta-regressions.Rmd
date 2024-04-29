@@ -1,0 +1,160 @@
+---
+title: "betareg"
+output: html_document
+date: "2023-12-17"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Read Data
+
+```{r}
+df_all <- read.csv("data/q_df.csv",
+                   header = TRUE, sep = ",")
+
+df_all$valuet <- (df_all$value + 1)/2
+
+# clip values
+eps <- 1e-6
+df_all$valuet[df_all$valuet < eps] <- eps
+df_all$valuet[df_all$valuet > 1 - eps] <- 1 - eps
+
+```
+
+## Run beta regressions for all model specifications
+
+
+```{r}
+library(glmmTMB)
+
+# create output data stores
+results_list <- list()
+for (i in 1:6) {
+  results_list[[i]] <- list()
+}
+bic_table <- data.frame()
+
+# loop through n = 10 and N
+for (n in c("10", "N")) {
+  # loop through each feature
+  for (feature in c("lexdiv", "sentclass", "sim", "smog")) {
+    df <- df_all[df_all$feature == feature & df_all$n == n,]
+    model1 <- glmmTMB(valuet ~ policy_neg.abs + policy_least.neg.abs + policy_pos.abs +   
+                              policy_pos.rel + policy_rev.chron + policy_chron +
+                              policy_pin.pred.lr + policy_pin.pred.rf + 
+                              policy_pred.nb + policy_pred.rf + replies_rh +
+                              replies_rt + pinned, family = beta_family(link = "logit"),
+                  data = df, control = glmmTMBControl(optCtrl = list(iter.max = 10000, eval.max = 10000)))    
+    model2 <- glmmTMB(valuet ~ (policy_neg.abs + policy_least.neg.abs + policy_pos.abs +   
+                              policy_pos.rel + policy_rev.chron + policy_chron +
+                              policy_pin.pred.lr + policy_pin.pred.rf + 
+                              policy_pred.nb + policy_pred.rf)*(replies_rh +
+                              replies_rt) + pinned, family = beta_family(link = "logit"),
+                  data = df, control = glmmTMBControl(optCtrl = list(iter.max = 10000, eval.max = 10000)))    
+    model3 <- glmmTMB(valuet ~ (policy_neg.abs + policy_least.neg.abs + policy_pos.abs +   
+                              policy_pos.rel + policy_rev.chron + policy_chron +
+                              policy_pin.pred.lr + policy_pin.pred.rf + 
+                              policy_pred.nb + policy_pred.rf)*(pinned) + replies_rh +
+                              replies_rt, family = beta_family(link = "logit"),
+                  data = df, control = glmmTMBControl(optCtrl = list(iter.max = 10000, eval.max = 10000)))
+    model4 <- glmmTMB(valuet ~ (policy_neg.abs + policy_least.neg.abs + policy_pos.abs +   
+                          policy_pos.rel + policy_rev.chron + policy_chron +
+                          policy_pin.pred.lr + policy_pin.pred.rf + 
+                          policy_pred.nb + policy_pred.rf)*(replies_rh +
+                          replies_rt + pinned), family = beta_family(link = "logit"),
+              data = df, control = glmmTMBControl(optCtrl = list(iter.max = 10000, eval.max = 10000))) 
+    model5 <- glmmTMB(valuet ~ (policy_neg.abs + policy_least.neg.abs + policy_pos.abs +   
+                          policy_pos.rel + policy_rev.chron + policy_chron +
+                          policy_pin.pred.lr + policy_pin.pred.rf + 
+                          policy_pred.nb + policy_pred.rf)*(replies_rh +
+                          replies_rt + pinned) + (replies_rh +
+                          replies_rt):(pinned), family = beta_family(link = "logit"),
+              data = df, control = glmmTMBControl(optCtrl = list(iter.max = 10000, eval.max = 10000))) 
+    model6 <- glmmTMB(valuet ~ (policy_neg.abs + policy_least.neg.abs + policy_pos.abs +   
+                              policy_pos.rel + policy_rev.chron + policy_chron +
+                              policy_pin.pred.lr + policy_pin.pred.rf + 
+                              policy_pred.nb + policy_pred.rf)*(replies_rh +
+                              replies_rt)*pinned, family = beta_family(link = "logit"),
+                  data = df, control = glmmTMBControl(optCtrl = list(iter.max = 10000, eval.max = 10000)))
+    
+    bic_table <- rbind(bic_table, data.frame(feature = feature, n = n, 
+                                             model1 = BIC(model1),
+                                             model2 = BIC(model2),
+                                             model3 = BIC(model3),
+                                             model4 = BIC(model4),
+                                             model5 = BIC(model5),
+                                             model6 = BIC(model6)
+                                             ))
+    
+    print(paste0(feature, "_", n))
+
+    results_list[[1]][[paste0(feature, "_", n)]] <- model1
+    results_list[[2]][[paste0(feature, "_", n)]] <- model2
+    results_list[[3]][[paste0(feature, "_", n)]] <- model3
+    results_list[[4]][[paste0(feature, "_", n)]] <- model4
+    results_list[[5]][[paste0(feature, "_", n)]] <- model5
+    results_list[[6]][[paste0(feature, "_", n)]] <- model6
+  }
+}
+
+
+```
+### Model fit summary table
+
+```{r}
+bic_table
+```
+
+## Save model coefficients to csv
+
+```{r}
+# save model coefficients for chosen model 4 spec to csv
+
+# create empty dataframe
+results_df <- data.frame()
+
+# loop through results_list2
+for (i in 1:length(results_list[[4]])) {
+  # extract model
+  model <- results_list[[4]][[i]]
+  # extract feature
+  feature <- names(results_list[[4]][i])
+  out <- strsplit(feature, "_")[[1]][1]
+  # extract n
+  n <- strsplit(feature, "_")[[1]][2]
+  # extract coefficient data
+  coefficients <- as.data.frame(summary(model)$coefficients$cond)
+  # move rownames to column
+  coefficients$feature <- rownames(coefficients)
+  rownames(coefficients) <- NULL
+  # add feature and n to coefficients
+  coefficients$variable <- out
+  coefficients$n <- n
+  # add coefficients to results_df
+  results_df <- rbind(results_df, coefficients)
+}
+
+results_df
+
+# save as csv
+# write.csv(results_df, "data/betareg.csv")
+
+```
+
+## Save model output summaries to files
+
+```{r}
+# save model output summaries for chosen model 4 spec to files (for latex appendix)
+for (n in c("10", "N")) {
+  for (feature in c("lexdiv", "sentclass", "sim", "smog")) {
+    m <- results_list[[4]][[paste0(feature, "_", n)]]
+    print(paste0(feature, "_", n))
+    # sink(paste0("data/model_summaries/", feature, "_", n, ".txt"))
+    print(summary(m))
+     sink(file = NULL)
+  }
+}
+```
+
