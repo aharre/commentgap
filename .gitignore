@@ -1,5 +1,6 @@
 
 .DS_Store
+/figs
 /data
-betareg.xlsx
 /data/comment_data_general_091022_untilarticle5874_corrected.csv
+betareg.xlsx
