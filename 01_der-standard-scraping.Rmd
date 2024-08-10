@@ -1,0 +1,458 @@
+---
+title: "01_der-standard-scraping"
+output: html_document
+date: "2022-10-11"
+---
+
+```{r}
+# scraping
+library(RSelenium)
+library(tidyverse)
+library(rvest)
+library(xml2)
+library(httr)
+
+#other
+library(dplyr)
+
+```
+
+#PREPARATION
+##Der STANDARD Crawler Rules
+
+6. Crawler
+Der automatisierte Abruf der Website-Inhalte ist nur unter Einhaltung der folgenden Regeln gestattet: 
+Die in der Robots.txt hinterlegten Anweisungen müssen vollständig eingehalten werden. Aus der Kennung des User-Agent des Crawlers (alias Spider, Robot, Bot) muss dessen Betreiber:in und eine Kontaktmöglichkeit eindeutig hervorgehen. Die Zugriffsrate darf einen Request pro Sekunde nicht überschreiten. Die weiter oben angeführten Copyright-Hinweise gelten auch für die Daten, die Crawler sammeln. Crawler dürfen überdies keinen User Generated Content erstellen, insbesondere keine Postings, Bewertungen, oder an Quiz/Umfragen teilnehmen. Anwendungen oder Programme, die den angeführten Regeln nicht entsprechen, wird die STANDARD Medien AG durch alle zulässigen und geeigneten Maßnahmen am Zugriff auf unsere Webinhalte hindern.
+
+##Open headless browser
+```{r}
+url <- 'https://www.derstandard.at/'
+
+# Set desired capabilities
+caps <- list(
+  "browserName" = "firefox",
+  "version" = "",
+  "platform" = "ANY",
+  "acceptInsecureCerts" = TRUE,
+  "moz:firefoxOptions" = list(
+    args = list(
+      "-user-agent=Flora Boewing, London School of Economics MSc Studentin, flora.boewing@gmail.com"
+    ),
+    prefs = list(
+      "dom.notifications.enabled" = FALSE # Disable notifications
+    )
+  )
+)
+
+# Start the Selenium server:
+rD <- rsDriver(browser=c("firefox"), 
+               port = 4400L,
+               chromever = NULL,
+               extraCapabilities = caps)
+
+driver <- rD[["client"]] #remDr <- rD$client
+
+# Navigate to the selected URL address
+driver$navigate(url)
+```
+
+##Test connection
+```{r}
+# Get source code of the page
+src <- driver$getPageSource()
+
+# and see its first 1000 characters
+substr(src, 1, 1000)
+```
+
+##Click Cookie banner & Push notification button
+```{r}
+driver$switchToFrame(1)
+
+# We need to click on "Yes, I'm happy" button:
+# 1. Use a command to locate the button on the page
+accept_button <- driver$findElement(using = "xpath", 
+                                    value = "/html/body/div/div[2]/div[3]/div[1]/button")
+# 2. Click on the button:
+accept_button$clickElement()
+# Switch back to default frame
+driver$switchToFrame(NULL)
+Sys.sleep(20)  # wait for push notifications
+
+driver$switchToFrame(NULL)
+# We need to click on "Yes, I'm happy" button:
+# 1. Use a command to locate the button on the page
+accept_button <- driver$findElement(using = "xpath", 
+                                    value = "/html/body/div[7]/div[3]/div[3]/div[1]/button[1]")
+
+# 2. Click on the button:
+accept_button$clickElement()
+```
+
+
+#ARTICLES
+##Find article links
+```{r}
+genres <- c("Wirtschaft","International","Inland","Web","Sport","Panorama","Kultur","Etat","Wissenschaft","Lifestyle","Diskurs","Karriere", "Immobilien","Zukunft","Gesundheit","Recht","Familie","Bildung","Reisen","dieStandard","Podcast","Video", "Mobilitaet")
+
+dates_raw <- seq(as.Date("2022/09/1"), as.Date("2022/10/31"), by="days")
+dates <- sapply(dates_raw, function(x) {gsub("(\\D)0", "\\1", format(x, "%Y/%m/%d"))})
+
+# get genre URLs
+genre_urls <- c()
+for(d in dates){
+  for(g in genres){
+    genre_urls <- append(genre_urls, paste0("https://www.derstandard.at/",g,"/",d))
+  }
+}
+
+length(genre_urls)
+
+article_links <- c()
+# scrape articles for each day and each genre
+for(i in genre_urls){
+
+  print(which(genre_urls == i))
+  Sys.sleep(1)
+  
+  # go to URL
+  driver$navigate(i)
+  # see if there were articles on that day
+  daily_article_section = tryCatch({
+      # get section with articles
+      daily_article_section <- driver$findElement(using = 'css', 
+                                                  value = 'main#main div.layout div.chronological section')
+      # get html
+      results_html <- read_html(daily_article_section$getElementAttribute('innerHTML')[[1]])
+      # get links
+      article_links <- append(article_links, html_nodes(results_html, css = "article div a") %>% html_attr("href"))
+      }, 
+    error = function(e) {}, 
+    finally = {})
+  # get section with articles
+  #daily_article_section <- driver$findElement(using = 'css', value = 'main#main div.layout div.chronological section')
+}
+
+article_links
+write.csv(article_links, "article_links.csv")
+
+# remove liveberichte
+article_links_clean <- article_links[which(startsWith(article_links, "/"))]
+length(article_links_clean)
+write.csv(article_links_clean, "article_links_cleaned.csv")
+```
+
+### merge 2 months together
+```{r}
+# import article links
+article_links_clean_0922 <- unlist(c(read.csv("article_links_cleaned_0922.csv", skip=1, header=FALSE)[,2]))
+article_links_clean_1022 <- unlist(c(read.csv("article_links_cleaned_1022.csv", skip=1, header=FALSE)[,2]))
+
+article_links_clean <- c(article_links_clean_0922, article_links_clean_1022)
+```
+
+
+##Scrape article info
+```{r}
+# september article_info
+article_info <- data.frame(matrix(ncol = 7))
+names(article_info) <- c("title", "subtitle", "genre1", "genre2", "genre3", "date", "text")
+
+for(i in article_links_clean[1:length(article_links_clean)]){
+  Sys.sleep(1)
+  
+  # navigate to article page
+  url <- paste0("https://www.derstandard.at", i)
+  driver$navigate(url)
+  
+  print(which(article_links_clean == i))
+  
+  Sys.sleep(1)
+  
+  # get genre
+  genre_div <- driver$findElement(using = 'class name', value = 'app--header--breadcrumb')
+  results_html <- read_html(genre_div$getElementAttribute('innerHTML')[[1]])
+  genre <- html_nodes(results_html, css = "a") %>% html_attr("href")
+  
+  Sys.sleep(1)
+  
+  # get title
+  article_div <- driver$findElement(using = 'class name', value = 'story-article')
+  results_html <- read_html(article_div$getElementAttribute('innerHTML')[[1]])
+  title <- xml2::xml_text(html_nodes(results_html, css = "div div header h1.article-title"))
+  
+  # get subtitle
+  subtitle <- xml2::xml_text(html_nodes(results_html, css = "div div header p.article-subtitle"))
+  
+  # get date
+  pubdate <- html_nodes(results_html, css = "div div header div.article-meta p.article-pubdate time") %>%
+    html_attr("datetime")
+  
+  # get text
+  text <- paste(xml2::xml_text(html_nodes(results_html, css = "div.article-body p:not([class])")), collapse = " ")
+  
+  article_info[which(article_links_clean == i),"title"] <- title
+  article_info[which(article_links_clean == i),"subtitle"] <- subtitle
+  article_info[which(article_links_clean == i),"genre1"] <- c(genre[1])
+  if(length(genre)>1){
+    article_info[which(article_links_clean == i),"genre2"] <- c(genre[2])
+    if(length(genre)>2){
+      article_info[which(article_links_clean == i),"genre3"] <- c(genre[3])
+    }
+  }
+  article_info[which(article_links_clean == i),"date"] <- pubdate
+  article_info[which(article_links_clean == i),"text"] <- text
+  
+}
+
+
+View(article_info)
+
+article_info$url <- article_links_clean
+
+# safety copy 
+write.csv(article_info, "article_info.csv")
+
+```
+
+```{r}
+# import data
+article_info_0922 <- read.csv("article_info_0922.csv")
+article_info_0922 <- article_info_0922[4:11]
+article_info_1022 <- read.csv("article_info_1022.csv")
+article_info_1022 <- article_info_1022[2:9]
+
+article_info <- rbind(article_info_0922, article_info_1022)
+
+nrow(article_info)
+View(article_info)
+length(unique(article_info$title))
+```
+
+
+
+#COMMENTS
+##Scrape comment info
+```{r}
+# 1. blank dataframe
+comment_info_general <- data.frame()
+#comment_info_general <- data.frame(comment_info_general_SCRAPING)
+
+# 2. MANUALLY CLICK ONCE TO SHOW ALL REPLIES, any article discussion
+url <- paste0("https://www.derstandard.at", article_links_clean[2508])
+driver$navigate(url)
+
+
+# loop through articles
+for(i in article_links_clean[1:length(article_links_clean)]){
+  Sys.sleep(1)
+  print(paste0("article number: ",which(article_links_clean == i)))
+  
+  # navigate to article page
+  url <- paste0("https://www.derstandard.at", i)
+  driver$navigate(url)
+  Sys.sleep(1)
+  
+  # go to forum
+  forum_section <- driver$findElement(using="xpath", value='//*[@id="story-community"]')
+  Sys.sleep(1)
+  driver$executeScript("arguments[0].scrollIntoView(true);", list(forum_section))
+  Sys.sleep(1)
+  
+  # Find the element that contains the shadow root
+  shadow_host <- driver$findElement(using="xpath", value='//*[@id="story-community"]/div/div[2]/dst-forum')
+  Sys.sleep(1)
+  
+  # see if any root comments are hidden and unhide them
+  tryCatch({
+    for(j in 1:100){
+      
+      print(j)
+      
+      # scroll to button
+      driver$executeScript(
+      "const shadowRoot = arguments[0].shadowRoot;
+       const element = shadowRoot.querySelector('section > button');
+       element.scrollIntoView();",
+      list(shadow_host)
+      )
+      Sys.sleep(1)
+      
+      # click "more comments"
+      driver$executeScript(
+        "const shadowRoot = arguments[0].shadowRoot;
+        const button = shadowRoot.querySelector('section > button');
+        button.click();",
+        list(shadow_host)
+      )
+      Sys.sleep(1)
+    }
+    }, 
+    error = function(e) {}, 
+    finally = {}
+    )
+  
+  ##### Scrape comment info
+
+  # get html of comments
+  forum_div <- driver$findElement(using = 'class name', value = 'story-community-inner')
+  Sys.sleep(1)
+  results_html <- read_html(forum_div$getElementAttribute('innerHTML')[[1]])
+  script <- paste0('return document.querySelector("#story-community > div > div.story-community-postings > dst-forum").shadowRoot.querySelector("section main").innerHTML') #shadow root
+  forum_html <- unlist(driver$executeScript(script))
+  Sys.sleep(1)
+  results_html <- read_html(forum_html)
+  comments <- html_nodes(results_html, css = "dst-posting")
+  print(paste0("# comments: ", length(comments)))
+  
+  # skip article if there are no comments
+  if(length(comments) == 0) next
+  
+  # post id
+  comment_id <- html_nodes(comments, css = "div[class^='posting--content']")
+  # Extract the class name from the XML nodeset object
+  comment_id <- xml2::xml_attr(comment_id, "class")
+  comment_id <- substring(comment_id, 27)
+  length(comment_id)
+  comment_info <- data.frame(comment_id = comment_id)
+  
+  # get user names
+  #users <- xml2::xml_text(html_nodes(comments, css = "dst-posting-head dst-posting--user button span span"))
+  comments_html_table <- bind_rows(lapply(xml_attrs(comments), function(x) data.frame(as.list(x), stringsAsFactors=FALSE)))
+  comments_html_table$user <- substring(comments_html_table$aria.label,13)
+  user_names <- comments_html_table$user
+  length(user_names)
+  comment_info$user_names <- user_names
+  
+  # get mitposterinnen
+  user_follower <- c()
+  for(x in 1:length(comments)){
+    user_follower_temp <- ifelse(length(html_nodes(comments[x], css = "dst-posting-head.posting--header dst-posting--user.usermenu button span")) > 1,
+                                   xml2::xml_text(html_nodes(comments[x], css = "dst-posting-head.posting--header dst-posting--user.usermenu button span div")), 0)
+    
+    user_follower <- append(user_follower, user_follower_temp)
+  }
+  comment_info$user_follower <- user_follower
+  
+  # get times
+  timestamp <- ifelse(xml2::xml_attr(comments, "class") == "posting posting-deleted", "", html_nodes(comments, css = "dst-posting-head time") %>% html_attr("data-date"))
+  length(timestamp)
+  comment_info$timestamp <- timestamp
+  
+  # get heading and text
+  comment_content <- html_nodes(comments, css = "div[class^='posting--content']")
+  comment_text <- c()
+  comment_heading <- c()
+  length(comment_content)
+  for(x in 1:length(comment_content)){
+    comment_heading_temp <- ifelse(length(html_nodes(comments[x], css = "div[class^='posting--content'] h1")) > 0,
+                                   xml2::xml_text(html_nodes(comments[x], css = "div[class^='posting--content'] h1")),
+                                   "")
+    comment_text_temp <- ifelse(length(html_nodes(comments[x], css = "div[class^='posting--content'] p")) > 0,
+                                   xml2::xml_text(html_nodes(comments[x], css = "div[class^='posting--content'] p")),
+                                   "")
+    
+    comment_heading <- append(comment_heading, comment_heading_temp)
+    comment_text <- append(comment_text, comment_text_temp)
+  }
+  comment_info$heading <- comment_heading
+  comment_info$text <- comment_text
+  
+  # get pinned status
+  pinned <- xml2::xml_text(html_nodes(comments, css = "dst-posting-head.posting--header time strong svg title"))
+  pinned <- c(pinned, vector("character", length = length(comments) - length(pinned)))
+  length(pinned)
+  comment_info$pinned <- pinned
+  
+  # check if root post
+  df <- bind_rows(lapply(xml_attrs(comments), function(x) data.frame(as.list(x), stringsAsFactors=FALSE)))
+  is_root_comment <- ifelse(df$data.level==0, 1, 0)
+  is_leaf_comment <- ifelse(df$class == "posting", 1, 0)
+  level_in_tree <- df$data.level
+  root_indices <- which(is_root_comment ==1)
+  root_of_tree <- sapply(1:length(comment_id), function(x) comment_id[max(root_indices[which(root_indices <= x)])])
+  
+  comment_info$is_root_comment <- is_root_comment
+  comment_info$is_leaf_comment <- is_leaf_comment
+  comment_info$level_in_tree <- level_in_tree
+  comment_info$root_of_tree <- root_of_tree
+  
+  # get votes
+  votes_pos <- c()
+  votes_neg <- c()
+  for(x in 1:length(comments)){
+    votes_pos_temp <- ifelse(length(html_nodes(comments[x], css = "dst-posting--ratinglog button span.pos")) > 0,
+                                   xml2::xml_text(html_nodes(comments[x], css = "dst-posting--ratinglog button span.pos")),
+                                   0)
+    votes_neg_temp <- ifelse(length(html_nodes(comments[x], css = "dst-posting--ratinglog button span.neg")) > 0,
+                                   xml2::xml_text(html_nodes(comments[x], css = "dst-posting--ratinglog button span.neg")),
+                                   0)
+    
+    votes_pos <- append(votes_pos, votes_pos_temp)
+    votes_neg <- append(votes_neg, votes_neg_temp)
+  }
+  comment_info$votes_pos <- votes_pos
+  comment_info$votes_neg <- votes_neg
+  
+  comment_info$id <- substring(comment_info$comment_id, 8)
+  
+  comment_info$article <- i
+  
+  comment_info
+  
+  # add to main dataframe
+  comment_info_general <- rbind(comment_info_general, comment_info)
+}
+
+
+# safety copy1
+write.csv(comment_info_general, "comment_info_091022_02.csv")
+
+
+# copy september comment info general
+#comment_info_general_SCRAPING <- data.frame(comment_info_general)
+
+nrow(comment_info_general)
+names(comment_info_general) == names(comment_info)
+
+```
+
+```{r}
+# import full dataset
+comment_info_general <- read.csv("comment_info_091022_01.csv")
+
+# delete some columns to be able to scrape, and some error rows
+comment_info_general <- comment_info_general[-c(881581, 881582, 881583), 2:16]
+#correct some errors
+comment_info_general$pinned[c(881586, 881587, 881588)] <- " Angeheftet ·"
+
+# correct another error
+comment_info_general <- comment_info_general[-c(1037254, 1037257, 1037256, 1037255),]
+comment_info_general$pinned[1037254] <- " Angeheftet ·"
+
+
+nrow(comment_info_general)
+View(comment_info_general[1:10,])
+length(unique(comment_info_general$article))
+
+```
+
+
+##Subset
+```{r}
+comment_info_general %>% group_by(article) %>% count() %>% arrange(desc(n))
+
+comment_info_d1 <- comment_info_general %>% filter(article == "/story/2000139939445/milliardenstrafe-gegen-moderator-alex-jones-ist-kein-vorbild-fuer-europa")
+
+View(comment_info_d1)
+
+```
+
+
+
+#Close the session
+```{r}
+driver$close()
+rD$server$stop()
+```
+

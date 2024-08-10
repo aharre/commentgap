@@ -1,0 +1,448 @@
+---
+title: "02A_feature-selection"
+output: html_document
+date: "2023-08-07"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+#packages
+library(quanteda)
+library(quanteda.textstats)
+library(quanteda.textmodels)
+library(dplyr)
+library(stringr)
+library(MASS)
+library(ggplot2)
+
+# working directory
+comment_info_general <- read.csv('data/comment_data_general_features.csv')
+```
+
+
+#Formatting
+```{r}
+summary(comment_info_general)
+
+#format existing variables
+comment_info_general$user_follower <- ifelse(is.na(comment_info_general$user_follower) == TRUE, 0,
+                                             comment_info_general$user_follower)
+comment_info_general$timestamp_f <- as.POSIXlt(comment_info_general$timestamp, format = "%d. %b %Y,
+                                               %H:%M:%OS")
+comment_info_general$pinned_f <- as.integer(ifelse(comment_info_general$pinned == " Angeheftet ·",
+                                                   1, 0))
+comment_info_general$is_root_comment <- as.logical(comment_info_general$is_root_comment)
+comment_info_general$is_leaf_comment <- as.logical(comment_info_general$is_leaf_comment)
+comment_info_general$votes_pos <- as.integer(comment_info_general$votes_pos)
+comment_info_general$votes_neg <- as.integer(comment_info_general$votes_neg)
+
+#create new variables
+comment_info_general$votes_rel <- comment_info_general$votes_pos - comment_info_general$votes_neg
+
+#prep dataframes for function
+article_info$date <- gsub("T", " ", article_info$date)
+article_info$date_f <- as.POSIXlt(article_info$date, format = "%Y-%m-%d %H:%M")
+comment_info_general$order_all <- 1:nrow(comment_info_general)
+
+comment_article_merge <- merge(comment_info_general, article_info, by.x = "article", by.y = "url",
+                               sort = FALSE, suffixes = c(".comment",".article"))
+comment_article_merge <- comment_article_merge %>% arrange(order_all)
+
+# difference to published article (0 if comment before article edits)
+comment_article_merge$hours_since_article <- ifelse(as.numeric(-(comment_article_merge$date_f -
+                                                            comment_article_merge$timestamp_f)/(60*60)) < 0,
+                                                    0,
+                                                    as.numeric(-(comment_article_merge$date_f -
+                                                            comment_article_merge$timestamp_f)/(60*60)))
+
+nrow(comment_article_merge)
+
+article_url <- unique(comment_info_general$article)[1]
+
+names(comment_article_merge)
+
+```
+
+##Calculate Features - as a function
+```{r}
+get_feature_df <- function(article_url){
+  
+  # filter comments for given article
+  comment_info_d1 <- comment_article_merge %>% filter(article == article_url)
+  
+  # save order
+  comment_info_d1$order <- 1:nrow(comment_info_d1)
+  
+  # copy
+  comment_data <- comment_info_d1
+  
+  # direct root post
+  direct_root <- sapply(1:length(comment_data$level_in_tree), function(x) { 
+    if(x%%1000 == 0){
+      print(x)
+    }
+    if(comment_data$level_in_tree[x] != 0){
+      possible_root_indices <- which(comment_data$level_in_tree == as.numeric(comment_data$level_in_tree[x])-1)
+      return(comment_data$id[max(possible_root_indices[which(possible_root_indices<x)])])
+    } else {
+      return("")
+    }
+  })
+  comment_data$direct_root_id <- direct_root
+  
+  # tree size
+  tree_sizes_lookup <- comment_data %>% count(root_of_tree)
+  names(tree_sizes_lookup) <- c("root_of_tree", "size_of_tree")
+  comment_data_1 <- merge(comment_data, tree_sizes_lookup, by = "root_of_tree", all.x=TRUE, 
+                          sort = FALSE)
+  
+  # tree height
+  tree_heights_lookup <- comment_data %>% group_by(root_of_tree) %>% 
+    summarize(height_of_tree = max(level_in_tree))
+  comment_data_1 <- merge(comment_data_1, tree_heights_lookup, by = "root_of_tree", 
+                          all.x=TRUE, sort = FALSE)
+  
+  # sort correctly again
+  comment_data_1 <- comment_data_1 %>% arrange(order)
+  
+  # delete duplicates of pinned posts and deleted comments
+  pinned_indices <- which(comment_data_1$pinned_f == 1)
+  pinned_ids <- unique(comment_data$id[which(comment_data_1$pinned_f == 1)])
+  to_delete <- c()
+  for(i in 1:length(pinned_ids)){
+    print(i)
+    duplicate_indices <- which(comment_data_1$id == pinned_ids[i])
+    to_delete <- append(to_delete, duplicate_indices[which(duplicate_indices != pinned_indices[i])])
+  }
+  # delete by user deleted comments 
+  to_delete <- append(to_delete, which(comment_data_1$id == ""))
+  comment_data_1 <- comment_data_1 %>% filter(!row_number() %in% to_delete)
+  
+  to_delete <- c()
+  # delete remaining duplicates
+  df_duplicates <- comment_data_1 %>% group_by(id) %>% count() %>% filter(n > 1)
+  for(i in df_duplicates$id){
+    duplicate_index <- max(which(comment_data_1$id == df_duplicates$id))
+    to_delete <- append(to_delete, duplicate_index)
+  }
+  comment_data_1 <- comment_data_1 %>% filter(!row_number() %in% to_delete)
+  
+  ## FEATURES
+  # lexical diversity
+  # combine heading and text
+  comment_data_1$heading_and_text.comment <- paste0(comment_data_1$heading, " ",
+                                                    comment_data_1$text.comment)
+  comment_text_all <- data.frame(docid = comment_data_1$comment_id, 
+                                 text = paste0(comment_data_1$heading, " ",
+                                               comment_data_1$text.comment))
+  corpus <- corpus(comment_text_all,   docid_field = "doc_id",  text_field = "text", 
+                   meta = list(),unique_docnames = TRUE)
+  tokens <- corpus %>% 
+    tokens(what="word", remove_punct = TRUE, remove_numbers = TRUE) %>% 
+    tokens_remove(stopwords("de")) %>% 
+    tokens_wordstem()
+  dfm <- dfm(tokens)
+  if(length(dfm) < 2){
+    comment_data_1$lexdiv_cttr <- NA
+  } else {
+    comment_data_1$lexdiv_cttr <- as.vector(textstat_lexdiv(dfm, c("CTTR"))[2])$CTTR
+  }
+  
+  # punctuation
+  comment_data_1$num_punct <- str_count(comment_data_1$heading_and_text.comment, "\\p{P}")
+  
+  # relevance - word vector similarity vs article
+  article_text <- paste0(comment_data_1$title[1], " ", comment_data_1$subtitle[1], " ", 
+                         comment_data_1$text.article[1])
+  documents <- c(article_text, comment_data_1$heading_and_text) 
+  
+  doc_names <- c("article", comment_data_1$comment_id)
+  corpus <- corpus(documents, docnames = doc_names)
+  tokens <- corpus %>% 
+    tokens(what="word", remove_punct = TRUE, remove_numbers = TRUE) %>% 
+    tokens_remove(stopwords("de")) %>% 
+    tokens_wordstem()
+  dfm <- dfm(tokens) %>% dfm_trim(min_termfreq = 2) %>% dfm_tfidf()
+  similarities_1 <- textstat_simil(dfm, method="cosine")
+  comment_data_1$cosine_1 <- as.vector(similarities_1[1,-1])
+  
+  # AMOUNT
+  # num of words
+  # splitting a string by spaces
+  split <- strsplit(comment_data_1$heading_and_text.comment, " ")
+  comment_data_1$num_words <- sapply(split, length)
+  
+  # num of sentences
+  comment_data_1$num_sentences <- nsentence(comment_data_1$heading_and_text.comment)
+  
+  # number of characters
+  comment_data_1$num_char <- nchar(comment_data_1$heading_and_text.comment)
+  
+  # characters-to-sentences ratio
+  comment_data_1$char_to_sent <- comment_data_1$num_char/comment_data_1$num_sentences
+  
+  # words-to-sentences ratio
+  comment_data_1$word_to_sent <- comment_data_1$num_words/comment_data_1$num_sentences
+  
+  # readability (i.e., the SMOG standard index of reading grade level)
+  corpus <- corpus(comment_data_1, text_field="heading_and_text.comment")
+  comment_data_1$SMOG_readability <- unlist(as.vector(textstat_readability(corpus, measure = "SMOG.de")[2]))
+  
+  # number of unique words
+  comment_data_1$num_words_unique <- sapply(list(sapply(split, unique)), length)
+  
+  # REPRESENTATIVE QUALITY
+  
+  # tagging or referencing other users
+  comment_data_1$second_person <- grepl("\\b(Du|Sie|du)\\b", comment_data_1$heading_and_text.comment)
+  
+  # num of direct replies
+  df_replies <- comment_data_1 %>% group_by(root_of_tree) %>% count() %>% arrange(desc(n))
+  df_replies$all_replies <- df_replies$n -1
+  df_replies <- df_replies[,c(1,3)]
+  comment_data_1 <- merge(comment_data_1, df_replies, by.x = "comment_id", by.y = "root_of_tree", all.x = TRUE,
+                          sort = FALSE)
+  comment_data_1 <- comment_data_1 %>% arrange(order)
+  
+  return(comment_data_1)
+}
+
+
+#test
+comment_data_a <- get_feature_df(article_links_clean[14])
+View(comment_data_a)
+
+```
+
+##Calculate Features for all comments
+```{r}
+nrow(comment_info_general)
+length(unique(comment_info_general$article)) # 5874 articles
+
+# create empty dataframe comment_data
+comment_data <- data.frame(matrix(nrow = 0, ncol = length(colnames(comment_data_a))))
+colnames(comment_data) <- colnames(comment_data_a)
+
+# fill for each article
+for(i in unique(comment_info_general$article)){
+  print(i)
+  print(which(unique(comment_info_general$article) == i))
+  comment_data_a <- get_feature_df(i)
+  comment_data <- rbind(comment_data, comment_data_a)
+}
+
+comment_data_general <- data.frame(comment_data)
+
+# 2. safety copy
+# write.csv(comment_data_general, "comment_data_general.csv")
+
+nrow(comment_data_general)
+nrow(comment_info_general)
+
+length(unique(comment_info_general$article))
+length(unique(comment_data_general$article))
+
+```
+
+## Load dataset
+```{r}
+comment_data_general <- read.csv("data/comment_data_general.csv")
+comment_data_general <- comment_data_general[,-1]
+```
+
+# Data check
+```{r}
+for(i in 1:ncol(comment_data_general)){
+  print(i)
+  print(colnames(comment_data_general)[i])
+  
+  print(head(comment_data_general[,i]))
+  print(summary(comment_data_general[,i]))
+}
+
+# change month names to english
+comment_data_general$timestamp <- gsub("Jänner", "January", comment_data_general$timestamp)
+comment_data_general$timestamp <- gsub("Februar", "February", comment_data_general$timestamp)
+comment_data_general$timestamp <- gsub("März", "March", comment_data_general$timestamp)
+comment_data_general$timestamp <- gsub("Mai", "May", comment_data_general$timestamp)
+comment_data_general$timestamp <- gsub("Juni", "June", comment_data_general$timestamp)
+comment_data_general$timestamp <- gsub("Juli", "July", comment_data_general$timestamp)
+comment_data_general$timestamp <- gsub("Oktober", "October", comment_data_general$timestamp)
+comment_data_general$timestamp <- gsub("Dezember", "December", comment_data_general$timestamp)
+
+# re-do formatting of timestamp
+comment_data_general$timestamp_f <- as.POSIXlt(comment_data_general$timestamp, format = "%d. %b %Y,
+                                               %H:%M:%OS")
+comment_data_general$date_f <- as.POSIXlt(comment_data_general$date_f, format = "%Y-%m-%d %H:%M")
+
+# re-do calc of hours since article
+comment_data_general$hours_since_article <- ifelse(as.numeric(-(comment_data_general$date_f - comment_data_general$timestamp_f)/(60*60)) < 0,
+       0,
+       as.numeric(-(comment_data_general$date_f - comment_data_general$timestamp_f)/(60*60)))
+
+# lexdiv: NAs are very few words, URLs, etc. -> set to zero
+comment_data_general$lexdiv_cttr <- ifelse(is.na(comment_data_general$lexdiv_cttr) == TRUE, 0, comment_data_general$lexdiv_cttr)
+
+# cosine: NAs are very few words, URLs, etc. -> set to zero
+comment_data_general$cosine_1 <- ifelse(is.na(comment_data_general$cosine_1) == TRUE, 0, comment_data_general$cosine_1)
+
+# SMOG: NAs are just smileys, punctuation. -> set to minimum, i.e. -2
+comment_data_general$SMOG_readability <- ifelse(is.na(comment_data_general$SMOG_readability) == TRUE, -2, comment_data_general$SMOG_readability)
+
+# re-calculate number of unique words for all discussions at once
+split <- strsplit(comment_data_general$heading_and_text.comment, " ")
+comment_data_general$num_words_unique <- sapply(sapply(split, unique), length)
+
+# all replies: NAs are comments without any replies, so setting to zero
+comment_data_general$all_replies <- ifelse(is.na(comment_data_general$all_replies) == TRUE, 0, comment_data_general$all_replies)
+
+# safety copy
+# write.csv(comment_data_general, "comment_data_general_091022_untilarticle5874_corrected.csv")
+names(comment_data_general)
+```
+
+# Load corrected dataset
+```{r}
+comment_data_general <- read.csv("data/comment_data_general_091022_untilarticle5874_corrected.csv")
+comment_data_general <- comment_data_general[,-1]
+head(comment_data_general)
+names(comment_data_general)
+```
+
+##Add sentiment feature
+```{r}
+#subset_sentiment <- comment_data_general$heading_and_text.comment
+#write.csv(subset_sentiment, "comment_data_general_091022_untilarticle5874_sentiment_subset.csv")
+
+# class
+sentiment_class <- read.csv("data/output_classes.csv")
+nrow(sentiment_class)
+comment_data_general$sentiment_class <- sentiment_class$X0
+
+comment_data_general$sentiment_class_c <- ifelse(comment_data_general$sentiment_class == "negative", 0,
+                                                         ifelse(comment_data_general$sentiment_class == "neutral", 1,
+                                                         ifelse(comment_data_general$sentiment_class == "positive", 2, NA)))
+
+hist(comment_data_general$sentiment_class_c)
+
+# probs
+sentiment_probs <- read.csv("data/output_probs.csv")
+head(sentiment_probs)
+colnames(sentiment_probs) <- c("positive", "negative", "neutral")
+
+sentiment_probs$positive_f <- as.numeric(substring(sentiment_probs$positive, 14, nchar(sentiment_probs$positive) -1))
+sentiment_probs$negative_f <- as.numeric(substring(sentiment_probs$negative, 14, nchar(sentiment_probs$negative) -1))
+sentiment_probs$neutral_f <- as.numeric(substring(sentiment_probs$neutral, 13, nchar(sentiment_probs$neutral) -1))
+
+comment_data_general$sentiment_prob_pos <- sentiment_probs$positive_f
+comment_data_general$sentiment_prob_neg <- sentiment_probs$negative_f
+comment_data_general$sentiment_prob_neu <- sentiment_probs$neutral_f
+
+# safety copy
+# write.csv(comment_data_general, "data/comment_data_general_091022_untilarticle5874_final.csv")
+```
+
+# Save scaled and transformed data
+
+```{r}
+file <- 'data/comment_data_general_091022_untilarticle5874_final_redacted.csv'
+data <- read.csv(file)[,-1]
+data$article <- as.factor(data$article)
+
+# convert pinned_f, root, leaf, second to boolean
+data$pinned_f <- as.logical(data$pinned_f)
+data$is_root_comment <- as.logical(data$is_root_comment)
+data$is_leaf_comment <- as.logical(data$is_leaf_comment)
+data$second_person <- as.logical(data$second_person)
+
+# get number of comments per article
+data$article_comments <- tapply(data$comment, data$article, length)[data$article]
+
+# get average votes pos per article
+data$votes_pos_mean <- tapply(data$votes_pos, data$article, mean)[data$article]
+# get total votes neg per article
+data$votes_neg_mean <- tapply(data$votes_neg, data$article, mean)[data$article]
+
+# fill NAs in genre2 with genre1
+data$genre2[is.na(data$genre2)] <- data$genre1[is.na(data$genre2)]
+
+# fill NAs in genre3 with genre2
+data$genre3[is.na(data$genre3)] <- data$genre2[is.na(data$genre3)]
+
+```
+
+```{r}
+# get unique genres
+length(unique(data$genre1))
+
+# get numeric cols
+num_vars <- sapply(data, is.numeric)
+names(num_vars[num_vars])
+```
+
+
+```{r}
+# plot histograms of the variables in ggplot2
+library(ggplot2)
+
+# plot histograms of the variables, with title as the variable name
+for (i in 1:ncol(data)){
+  if (is.numeric(data[,i])){
+    print(ggplot(data, aes(data[,i])) + geom_histogram() + ggtitle(names(data)[i]))
+  }
+}
+```
+
+
+```{r}
+# log long tail
+to_log <- c('user_follower', 'level_in_tree', 'size_of_tree', 'height_of_tree', 'hours_since_article', 'num_punct', 'all_replies', 'votes_pos_mean', 'votes_neg_mean', 'article_comments')
+for (i in to_log){
+  data[,i] <- log(data[,i] + 1)
+}
+extra_log <- c('votes_pos', 'votes_neg')
+for (i in extra_log){
+  data[,paste(i, '_log', sep='')] <- log(data[,i] + 1)
+}
+
+# scale the numeric variables
+data_scaled <- data
+
+num_vars <- sapply(data_scaled, is.numeric)
+# don't rescale raw votes
+num_vars['votes_pos'] <- FALSE
+num_vars['votes_neg'] <- FALSE
+data_scaled[num_vars] <- scale(data_scaled[num_vars])
+
+```
+
+```{r}
+
+for (i in 1:ncol(data_scaled)){
+  if (is.numeric(data_scaled[,i])){
+    print(ggplot(data_scaled, aes(data_scaled[,i])) + geom_histogram() + ggtitle(names(data_scaled)[i]))
+  }
+}
+
+```
+
+```{r}
+c <- c('sentiment_prob_pos', 'sentiment_prob_neg', 'lexdiv_cttr', 'num_punct', 'num_sentences', 'SMOG_readability', 'second_person', 'user_follower', 'level_in_tree')
+a <- c('cosine_1', 'hours_since_article', 'votes_pos_mean', 'votes_neg_mean', 'article_comments')
+s <- c('is_leaf_comment', 'size_of_tree', 'height_of_tree','all_replies')
+g <- c('genre1', 'genre2', 'genre3')
+v <- c('votes_neg', 'votes_pos')
+vl <- c('votes_neg_log', 'votes_pos_log')
+p <- c('pinned_f')
+
+# save df with relevant columns
+data_scaled_relevant <- data_scaled[,c(c, a, s, g, v, vl, p)]
+
+# write csv
+write.csv(data_scaled_relevant, 'data/data_scaled.csv')
+
+```

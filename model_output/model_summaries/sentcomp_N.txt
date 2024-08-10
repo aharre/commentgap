@@ -1,0 +1,60 @@
+ Family: beta  ( logit )
+Formula:          valuet ~ (policy_neg.abs + policy_least.neg.abs + policy_pos.abs +  
+    policy_pos.rel + policy_rev.chron + policy_chron + policy_pin.pred.lr +      policy_pin.pred.xgb + policy_pred.nb + policy_pred.xgb) *  
+    (replies_rh + replies_rt + pinned)
+Data: df
+
+      AIC       BIC    logLik  deviance  df.resid 
+-577640.2 -577187.5  288865.1 -577730.2    172545 
+
+
+Dispersion parameter for beta family ():  120 
+
+Conditional model:
+                                  Estimate Std. Error z value Pr(>|z|)    
+(Intercept)                      2.823e-04  2.899e-03   0.097 0.922432    
+policy_neg.abs                  -8.195e-02  4.102e-03 -19.980  < 2e-16 ***
+policy_least.neg.abs             8.651e-02  4.102e-03  21.089  < 2e-16 ***
+policy_pos.abs                  -3.010e-02  4.100e-03  -7.342 2.10e-13 ***
+policy_pos.rel                   1.583e-02  4.100e-03   3.861 0.000113 ***
+policy_rev.chron                -3.602e-02  4.100e-03  -8.784  < 2e-16 ***
+policy_chron                     3.584e-02  4.100e-03   8.740  < 2e-16 ***
+policy_pin.pred.lr              -3.446e-02  4.100e-03  -8.405  < 2e-16 ***
+policy_pin.pred.xgb             -1.070e-01  4.103e-03 -26.081  < 2e-16 ***
+policy_pred.nb                  -5.817e-02  4.101e-03 -14.183  < 2e-16 ***
+policy_pred.xgb                 -4.549e-02  4.101e-03 -11.094  < 2e-16 ***
+replies_rh                      -1.698e-02  3.551e-03  -4.783 1.73e-06 ***
+replies_rt                      -5.607e-03  3.551e-03  -1.579 0.114290    
+pinned                           9.912e-04  2.899e-03   0.342 0.732447    
+policy_neg.abs:replies_rh        5.783e-02  5.023e-03  11.514  < 2e-16 ***
+policy_neg.abs:replies_rt        1.688e-02  5.023e-03   3.360 0.000778 ***
+policy_neg.abs:pinned            3.532e-03  4.101e-03   0.861 0.389159    
+policy_least.neg.abs:replies_rh -5.232e-02  5.023e-03 -10.417  < 2e-16 ***
+policy_least.neg.abs:replies_rt -5.395e-02  5.022e-03 -10.743  < 2e-16 ***
+policy_least.neg.abs:pinned     -4.231e-02  4.101e-03 -10.317  < 2e-16 ***
+policy_pos.abs:replies_rh        1.837e-02  5.022e-03   3.657 0.000255 ***
+policy_pos.abs:replies_rt        1.759e-02  5.022e-03   3.503 0.000460 ***
+policy_pos.abs:pinned           -6.696e-04  4.100e-03  -0.163 0.870281    
+policy_pos.rel:replies_rh       -2.001e-02  5.022e-03  -3.985 6.74e-05 ***
+policy_pos.rel:replies_rt        8.292e-03  5.022e-03   1.651 0.098684 .  
+policy_pos.rel:pinned           -1.393e-03  4.100e-03  -0.340 0.734134    
+policy_rev.chron:replies_rh      3.289e-02  5.022e-03   6.549 5.81e-11 ***
+policy_rev.chron:replies_rt      2.201e-02  5.022e-03   4.384 1.17e-05 ***
+policy_rev.chron:pinned         -5.841e-04  4.100e-03  -0.142 0.886726    
+policy_chron:replies_rh         -2.807e-02  5.022e-03  -5.590 2.27e-08 ***
+policy_chron:replies_rt         -1.510e-02  5.022e-03  -3.008 0.002633 ** 
+policy_chron:pinned             -1.668e-03  4.100e-03  -0.407 0.684235    
+policy_pin.pred.lr:replies_rh    3.338e-02  5.022e-03   6.648 2.98e-11 ***
+policy_pin.pred.lr:replies_rt    3.337e-02  5.022e-03   6.645 3.03e-11 ***
+policy_pin.pred.lr:pinned       -1.319e-03  4.100e-03  -0.322 0.747682    
+policy_pin.pred.xgb:replies_rh   8.649e-02  5.024e-03  17.217  < 2e-16 ***
+policy_pin.pred.xgb:replies_rt   4.774e-02  5.024e-03   9.503  < 2e-16 ***
+policy_pin.pred.xgb:pinned      -1.516e-03  4.102e-03  -0.370 0.711712    
+policy_pred.nb:replies_rh        1.882e-02  5.023e-03   3.747 0.000179 ***
+policy_pred.nb:replies_rt       -2.333e-02  5.023e-03  -4.645 3.41e-06 ***
+policy_pred.nb:pinned            4.333e-05  4.101e-03   0.011 0.991570    
+policy_pred.xgb:replies_rh       1.337e-02  5.022e-03   2.663 0.007749 ** 
+policy_pred.xgb:replies_rt       5.834e-03  5.022e-03   1.162 0.245415    
+policy_pred.xgb:pinned          -1.010e-03  4.101e-03  -0.246 0.805428    
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1

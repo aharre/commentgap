@@ -1,5 +1,5 @@
 ---
-title: "betareg"
+title: "04_beta-regressions"
 output: html_document
 date: "2023-12-17"
 ---
@@ -34,50 +34,60 @@ results_list <- list()
 for (i in 1:6) {
   results_list[[i]] <- list()
 }
+aic_table <- data.frame()
 bic_table <- data.frame()
 
 # loop through n = 10 and N
 for (n in c("10", "N")) {
   # loop through each feature
-  for (feature in c("lexdiv", "sentclass", "sim", "smog")) {
+  for (feature in c("lexdiv", "sentcomp", "sim", "smog")) {
     df <- df_all[df_all$feature == feature & df_all$n == n,]
     model1 <- glmmTMB(valuet ~ policy_neg.abs + policy_least.neg.abs + policy_pos.abs +   
                               policy_pos.rel + policy_rev.chron + policy_chron +
-                              policy_pin.pred.lr + policy_pin.pred.rf + 
-                              policy_pred.nb + policy_pred.rf + replies_rh +
+                              policy_pin.pred.lr + policy_pin.pred.xgb + 
+                              policy_pred.nb + policy_pred.xgb + replies_rh +
                               replies_rt + pinned, family = beta_family(link = "logit"),
-                  data = df, control = glmmTMBControl(optCtrl = list(iter.max = 10000, eval.max = 10000)))    
+                  data = df, control = glmmTMBControl(optCtrl = list(iter.max = 100000, eval.max = 100000)))    
     model2 <- glmmTMB(valuet ~ (policy_neg.abs + policy_least.neg.abs + policy_pos.abs +   
                               policy_pos.rel + policy_rev.chron + policy_chron +
-                              policy_pin.pred.lr + policy_pin.pred.rf + 
-                              policy_pred.nb + policy_pred.rf)*(replies_rh +
+                              policy_pin.pred.lr + policy_pin.pred.xgb + 
+                              policy_pred.nb + policy_pred.xgb)*(replies_rh +
                               replies_rt) + pinned, family = beta_family(link = "logit"),
-                  data = df, control = glmmTMBControl(optCtrl = list(iter.max = 10000, eval.max = 10000)))    
+                  data = df, control = glmmTMBControl(optCtrl = list(iter.max = 100000, eval.max = 100000)))    
     model3 <- glmmTMB(valuet ~ (policy_neg.abs + policy_least.neg.abs + policy_pos.abs +   
                               policy_pos.rel + policy_rev.chron + policy_chron +
-                              policy_pin.pred.lr + policy_pin.pred.rf + 
-                              policy_pred.nb + policy_pred.rf)*(pinned) + replies_rh +
+                              policy_pin.pred.lr + policy_pin.pred.xgb + 
+                              policy_pred.nb + policy_pred.xgb)*(pinned) + replies_rh +
                               replies_rt, family = beta_family(link = "logit"),
-                  data = df, control = glmmTMBControl(optCtrl = list(iter.max = 10000, eval.max = 10000)))
+                  data = df, control = glmmTMBControl(optCtrl = list(iter.max = 100000, eval.max = 100000)))
     model4 <- glmmTMB(valuet ~ (policy_neg.abs + policy_least.neg.abs + policy_pos.abs +   
                           policy_pos.rel + policy_rev.chron + policy_chron +
-                          policy_pin.pred.lr + policy_pin.pred.rf + 
-                          policy_pred.nb + policy_pred.rf)*(replies_rh +
+                          policy_pin.pred.lr + policy_pin.pred.xgb + 
+                          policy_pred.nb + policy_pred.xgb)*(replies_rh +
                           replies_rt + pinned), family = beta_family(link = "logit"),
-              data = df, control = glmmTMBControl(optCtrl = list(iter.max = 10000, eval.max = 10000))) 
+              data = df, control = glmmTMBControl(optCtrl = list(iter.max = 100000, eval.max = 100000))) 
     model5 <- glmmTMB(valuet ~ (policy_neg.abs + policy_least.neg.abs + policy_pos.abs +   
                           policy_pos.rel + policy_rev.chron + policy_chron +
-                          policy_pin.pred.lr + policy_pin.pred.rf + 
-                          policy_pred.nb + policy_pred.rf)*(replies_rh +
+                          policy_pin.pred.lr + policy_pin.pred.xgb + 
+                          policy_pred.nb + policy_pred.xgb)*(replies_rh +
                           replies_rt + pinned) + (replies_rh +
                           replies_rt):(pinned), family = beta_family(link = "logit"),
-              data = df, control = glmmTMBControl(optCtrl = list(iter.max = 10000, eval.max = 10000))) 
+              data = df, control = glmmTMBControl(optCtrl = list(iter.max = 100000, eval.max = 100000))) 
     model6 <- glmmTMB(valuet ~ (policy_neg.abs + policy_least.neg.abs + policy_pos.abs +   
                               policy_pos.rel + policy_rev.chron + policy_chron +
-                              policy_pin.pred.lr + policy_pin.pred.rf + 
-                              policy_pred.nb + policy_pred.rf)*(replies_rh +
+                              policy_pin.pred.lr + policy_pin.pred.xgb + 
+                              policy_pred.nb + policy_pred.xgb)*(replies_rh +
                               replies_rt)*pinned, family = beta_family(link = "logit"),
-                  data = df, control = glmmTMBControl(optCtrl = list(iter.max = 10000, eval.max = 10000)))
+                  data = df, control = glmmTMBControl(optCtrl = list(iter.max = 100000, eval.max = 100000)))
+    
+    aic_table <- rbind(aic_table, data.frame(feature = feature, n = n, 
+                                               model1 = AIC(model1),
+                                               model2 = AIC(model2),
+                                               model3 = AIC(model3),
+                                               model4 = AIC(model4),
+                                               model5 = AIC(model5),
+                                               model6 = AIC(model6)
+                                               ))
     
     bic_table <- rbind(bic_table, data.frame(feature = feature, n = n, 
                                              model1 = BIC(model1),
@@ -99,12 +109,19 @@ for (n in c("10", "N")) {
   }
 }
 
+# save resultslist rds
+saveRDS(results_list, "model_output/beta_results_list.rds")
 
 ```
 ### Model fit summary table
 
 ```{r}
+aic_table
 bic_table
+
+write.csv(aic_table, "model_output/aic_table.csv")
+write.csv(bic_table, "model_output/bic_table.csv")
+
 ```
 
 ## Save model coefficients to csv
@@ -139,7 +156,7 @@ for (i in 1:length(results_list[[4]])) {
 results_df
 
 # save as csv
-# write.csv(results_df, "data/betareg.csv")
+write.csv(results_df, "model_output/betareg.csv")
 
 ```
 
@@ -148,10 +165,10 @@ results_df
 ```{r}
 # save model output summaries for chosen model 4 spec to files (for latex appendix)
 for (n in c("10", "N")) {
-  for (feature in c("lexdiv", "sentclass", "sim", "smog")) {
+  for (feature in c("lexdiv", "sentcomp", "sim", "smog")) {
     m <- results_list[[4]][[paste0(feature, "_", n)]]
     print(paste0(feature, "_", n))
-    # sink(paste0("data/model_summaries/", feature, "_", n, ".txt"))
+    sink(paste0("model_output/model_summaries/", feature, "_", n, ".txt"))
     print(summary(m))
      sink(file = NULL)
   }

@@ -4,3 +4,17 @@
 /data
 /data/comment_data_general_091022_untilarticle5874_corrected.csv
 betareg.xlsx
+scrap*
+Presentation-IC2S2-2024.pptx
+~$Presentation-IC2S2-2024.pptx
+~$3C_283.pptx
+3C_283.pptx
+.Rhistory
+/Capstone Code
+model_output/regressions/votes_neg_results.rds
+model_output/regressions/votes_pos_results.rds
+model_output/regressions/pin_results.rds
+model_output/xgbs/pred_pinned_xgb.csv
+model_output/beta_results_list.rds
+model_output/xgbs/pred_votes_neg_xgb.csv
+model_output/xgbs/pred_votes_pos_xgb.csv

@@ -1,0 +1,723 @@
+---
+title: "02B_pin-vote-regressions"
+output: html_document
+date: "2024-05-09"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Read data
+
+```{r}
+library(MASS)
+library(lme4)
+library(glmmTMB)
+library(Metrics)
+```
+
+```{r}
+file <- 'data/comment_data_general_091022_untilarticle5874_final_redacted.csv'
+data <- read.csv(file)[,-1]
+data$article <- as.factor(data$article)
+
+# convert pinned_f, root, leaf, second to boolean
+data$pinned_f <- as.logical(data$pinned_f)
+data$is_root_comment <- as.logical(data$is_root_comment)
+data$is_leaf_comment <- as.logical(data$is_leaf_comment)
+data$second_person <- as.logical(data$second_person)
+
+# get number of comments per article
+data$article_comments <- tapply(data$comment, data$article, length)[data$article]
+
+# get average votes pos per article
+data$votes_pos_mean <- tapply(data$votes_pos, data$article, mean)[data$article]
+# get total votes neg per article
+data$votes_neg_mean <- tapply(data$votes_neg, data$article, mean)[data$article]
+
+# fill NAs in genre2 with genre1
+data$genre2[is.na(data$genre2)] <- data$genre1[is.na(data$genre2)]
+
+# fill NAs in genre3 with genre2
+data$genre3[is.na(data$genre3)] <- data$genre2[is.na(data$genre3)]
+
+```
+
+```{r}
+# get unique genres
+length(unique(data$genre1))
+
+# get numeric cols
+num_vars <- sapply(data, is.numeric)
+names(num_vars[num_vars])
+```
+
+
+```{r}
+# plot histograms of the variables in ggplot2
+library(ggplot2)
+
+# plot histograms of the variables, with title as the variable name
+for (i in 1:ncol(data)){
+  if (is.numeric(data[,i])){
+    print(ggplot(data, aes(data[,i])) + geom_histogram() + ggtitle(names(data)[i]))
+  }
+}
+```
+
+
+```{r}
+# log long tail
+to_log <- c('user_follower', 'level_in_tree', 'size_of_tree', 'height_of_tree', 'hours_since_article', 'num_punct', 'all_replies', 'votes_pos_mean', 'votes_neg_mean', 'article_comments')
+for (i in to_log){
+  data[,i] <- log(data[,i] + 1)
+}
+extra_log <- c('votes_pos', 'votes_neg')
+for (i in extra_log){
+  data[,paste(i, '_log', sep='')] <- log(data[,i] + 1)
+}
+
+# scale the numeric variables
+data_scaled <- data
+
+num_vars <- sapply(data_scaled, is.numeric)
+# don't rescale raw votes
+num_vars['votes_pos'] <- FALSE
+num_vars['votes_neg'] <- FALSE
+data_scaled[num_vars] <- scale(data_scaled[num_vars])
+```
+
+```{r}
+
+for (i in 1:ncol(data_scaled)){
+  if (is.numeric(data_scaled[,i])){
+    print(ggplot(data_scaled, aes(data_scaled[,i])) + geom_histogram() + ggtitle(names(data_scaled)[i]))
+  }
+}
+
+```
+
+
+## Setup variables
+
+```{r}
+c <- c('sentiment_prob_pos', 'sentiment_prob_neg', 'lexdiv_cttr', 'num_punct', 'num_sentences', 'SMOG_readability', 'second_person', 'user_follower', 'is_root_comment', 'level_in_tree')
+a <- c('cosine_1', 'hours_since_article', 'votes_pos_mean', 'votes_neg_mean', 'article_comments')
+s <- c('is_leaf_comment', 'size_of_tree', 'height_of_tree','all_replies')
+g <- c('genre1', 'genre2', 'genre3')
+v <- c('votes_neg', 'votes_pos')
+vl <- c('votes_neg_log', 'votes_pos_log')
+p <- c('pinned_f')
+
+# apply paste collapse with '+' to each of the lists
+cs <- paste(c, collapse = '+')
+as <- paste(a, collapse = '+')
+ss <- paste(s, collapse = '+')
+casg <- paste(c(cs, as, 'factor(genre1)'), collapse = '+')
+cassg <- paste(c(cs, as, 'factor(genre1)', ss), collapse = '+')
+
+# create the formulae
+pf1 <- as.formula(paste('pinned_f ~', casg))
+pf2 <- as.formula(paste('pinned_f ~', cassg))
+pf3 <- as.formula(paste('pinned_f ~', cassg, '+', 'votes_neg_log + votes_pos_log'))
+
+vpf1 <- as.formula(paste('votes_pos ~', casg))
+vpf2 <- as.formula(paste('votes_pos ~', casg, '+', 'pinned_f'))
+vpf3 <- as.formula(paste('votes_pos ~', cassg, '+', 'pinned_f'))
+vpf4 <- as.formula(paste('votes_pos ~', cassg, '+', 'pinned_f + votes_neg_log'))
+
+vnf1 <- as.formula(paste('votes_neg ~', casg))
+vnf2 <- as.formula(paste('votes_neg ~', casg, '+', 'pinned_f'))
+vnf3 <- as.formula(paste('votes_neg ~', cassg, '+', 'pinned_f'))
+vnf4 <- as.formula(paste('votes_neg ~', cassg, '+', 'pinned_f + votes_pos_log'))
+
+```
+
+```{r}
+# save df with relevant columns
+data_scaled_relevant <- data_scaled[,c(c, a, s, g, v, vl, p)]
+
+# write csv
+write.csv(data_scaled_relevant, 'data/data_scaled.csv')
+
+```
+
+# Setup
+
+## Read data
+
+```{r}
+# read csv
+
+data_scaled <- read.csv('data/data_scaled.csv')[, -1]
+data_scaled$genre1 <- relevel(as.factor(data_scaled$genre1), ref = "/inland")
+data_pin_scaled <- data_scaled[data_scaled$is_root_comment,]
+```
+
+## setup formulae
+
+```{r}
+c <- c('sentiment_prob_pos', 'sentiment_prob_neg', 'lexdiv_cttr', 'num_punct', 'num_sentences', 'SMOG_readability', 'second_person', 'user_follower', 'is_root_comment', 'level_in_tree')
+a <- c('cosine_1', 'hours_since_article', 'votes_pos_mean', 'votes_neg_mean', 'article_comments')
+s <- c('is_leaf_comment', 'size_of_tree', 'height_of_tree','all_replies')
+g <- c('genre1', 'genre2', 'genre3')
+v <- c('votes_neg', 'votes_pos')
+vl <- c('votes_neg_log', 'votes_pos_log')
+p <- c('pinned_f')
+
+# apply paste collapse with '+' to each of the lists
+cs <- paste(c, collapse = '+')
+csp <- paste(c[1:8], collapse = '+')
+as <- paste(a, collapse = '+')
+ss <- paste(s, collapse = '+')
+casgp <- paste(c(csp, as, 'factor(genre1)'), collapse = '+')
+cassgp <- paste(c(csp, as, 'factor(genre1)', ss), collapse = '+')
+casg <- paste(c(cs, as, 'factor(genre1)'), collapse = '+')
+cassg <- paste(c(cs, as, 'factor(genre1)', ss), collapse = '+')
+
+# create the formulae
+pf1 <- as.formula(paste('pinned_f ~', casgp))
+pf2 <- as.formula(paste('pinned_f ~', cassgp))
+pf3 <- as.formula(paste('pinned_f ~', cassgp, '+', 'votes_neg_log + votes_pos_log'))
+
+vpf1 <- as.formula(paste('votes_pos ~', casg))
+vpf2 <- as.formula(paste('votes_pos ~', casg, '+', 'pinned_f'))
+vpf3 <- as.formula(paste('votes_pos ~', cassg, '+', 'pinned_f'))
+vpf4 <- as.formula(paste('votes_pos ~', cassg, '+', 'pinned_f + votes_neg_log'))
+
+vnf1 <- as.formula(paste('votes_neg ~', casg))
+vnf2 <- as.formula(paste('votes_neg ~', casg, '+', 'pinned_f'))
+vnf3 <- as.formula(paste('votes_neg ~', cassg, '+', 'pinned_f'))
+vnf4 <- as.formula(paste('votes_neg ~', cassg, '+', 'pinned_f + votes_pos_log'))
+```
+
+# Run Regressions
+
+## Editors' Picks
+
+### Model selection
+
+```{r}
+pin_results <- list()
+n <- 1
+nt <- 16
+for(f in list(pf1, pf2, pf3)){
+  # logistic regression
+  model <- glmmTMB(f, data = data_pin_scaled, family = binomial, control = glmmTMBControl(parallel = nt, optimizer=optim,
+                                optArgs=list(method="BFGS")))
+
+  pin_results[[n]] <- model
+  print(summary(model))
+  # evaluate model precision, recall, accuracy, f1
+  pred <- predict(model, data_pin_scaled, type = 'response')
+  pred <- ifelse(pred > 0.5, 1, 0)
+  precision <- sum(pred & data_pin_scaled$pinned_f) / sum(pred)
+  recall <- sum(pred & data_pin_scaled$pinned_f) / sum(data_pin_scaled$pinned_f)
+  accuracy <- sum(pred == data_pin_scaled$pinned_f) / nrow(data_pin_scaled)
+  f1 <- 2 * precision * recall / (precision + recall)
+  print(paste('Precision:', precision))
+  print(paste('Recall:', recall))
+  print(paste('Accuracy:', accuracy))
+  print(paste('F1:', f1))
+  n <- n + 1
+}
+
+# main pins:
+# Pre vars + genre
+# Pre vars + genre + engagement (?)
+# Pre vars + genre + engagement + votes
+
+```
+
+```{r}
+# pin_results <- readRDS("model_output/regressions/pin_results.rds")
+
+for(model in pin_results){
+# evaluate model precision, recall, accuracy, f1
+  pred <- predict(model, data_pin_scaled, type = 'response')
+  pred <- ifelse(pred > 0.5, 1, 0)
+  precision <- sum(pred & data_pin_scaled$pinned_f) / sum(pred)
+  recall <- sum(pred & data_pin_scaled$pinned_f) / sum(data_pin_scaled$pinned_f)
+  accuracy <- sum(pred == data_pin_scaled$pinned_f) / nrow(data_pin_scaled)
+  f1 <- 2 * precision * recall / (precision + recall)
+  print(paste('Precision:', precision))
+  print(paste('Recall:', recall))
+  print(paste('Accuracy:', accuracy))
+  print(paste('F1:', f1))
+}
+```
+
+
+### Save results
+
+```{r}
+# save results
+saveRDS(pin_results, file = "model_output/regressions/pin_results.rds")
+```
+
+```{r}
+library(ggplot2)
+
+pin_results <- readRDS("model_output/regressions/pin_results.rds")
+
+# plot AIC of models 1-4 from pin_results
+pin_aic <- c()
+pin_bic <- c()
+for (i in 1:3){
+  pin_aic[i] <- AIC(pin_results[[i]])
+  pin_bic[i] <- BIC(pin_results[[i]])
+}
+# plot with ggplot
+
+pin_aic <- data.frame(model = c('pf1', 'pf2', 'pf3'), aic = pin_aic, type = 'editors_picks')
+pin_bic <- data.frame(model = c('pf1', 'pf2', 'pf3'), bic = pin_bic, type = 'editors_picks')
+
+ggplot(pin_aic, aes(x = model, y = aic, fill = type)) +
+  geom_bar(stat = 'identity', position = 'dodge') +
+  labs(title = 'AIC of models for Editors Picks', x = 'Model', y = 'AIC') +
+  theme_minimal() 
+
+pin_aic
+write.csv(pin_aic, "model_output/regressions/pin_aic.csv")
+
+ggplot(pin_bic, aes(x = model, y = bic, fill = type)) +
+  geom_bar(stat = 'identity', position = 'dodge') +
+  labs(title = 'BIC of models for Editors Picks', x = 'Model', y = 'BIC') +
+  theme_minimal() 
+
+pin_bic
+write.csv(pin_bic, "model_output/regressions/pin_bic.csv")
+
+```
+
+```{r}
+# Combine coefficients into a single table, fill empty with NA
+
+df <- data.frame()
+dfs <- data.frame()
+
+for (name in names(summary(pin_results[[3]])$coefficients$cond[,1])){
+  
+  if (name %in% names(summary(pin_results[[1]])$coefficients$cond[,1])){
+    pf1 <- summary(pin_results[[1]])$coefficients$cond[name,1]
+    sf1 <- summary(pin_results[[1]])$coefficients$cond[name,4]
+  }
+  else{
+    pf1 = NA
+    sf1 <- NA
+  }
+  
+  if (name %in% names(summary(pin_results[[2]])$coefficients$cond[,1])){
+    pf2 <- summary(pin_results[[2]])$coefficients$cond[name,1]
+    sf2 <- summary(pin_results[[2]])$coefficients$cond[name,4]
+    }
+  else{
+    pf2 <- NA
+    sf2 <- NA
+  }
+  
+  df <- rbind(df, data.frame(name = name,
+                             pf1 = pf1,
+                             pf2 = pf2,
+                             pf3 = summary(pin_results[[3]])$coefficients$cond[name,1]))
+  dfs <- rbind(dfs, data.frame(name = name,
+                             sf1 = sf1,
+                             sf2 = sf2,
+                             sf3 = summary(pin_results[[3]])$coefficients$cond[name,4]))
+  
+}
+
+print(df)
+print(dfs)
+
+```
+
+```{r}
+# save results to csv
+write.csv(df, 'model_output/regressions/pin_coefs.csv')
+write.csv(dfs, 'model_output/regressions/pin_pvalues.csv')
+```
+
+### Get final model predictions
+
+```{r}
+# get predicted probabilities for last model
+pin_results <- readRDS("model_output/regressions/pin_results.rds")
+
+data_notroot_scaled <- data_scaled[data_scaled$is_root_comment == 0,]
+predroot <- predict(pin_results[[3]], data_pin_scaled, type = 'response')
+prednotroot <- predict(pin_results[[3]], data_notroot_scaled, type = 'response') * min(predroot)
+preds <- data.frame(pred = rep(NA, nrow(data_scaled)))
+preds$pred[which(data_scaled$is_root_comment)] <- predroot
+preds$pred[which(data_scaled$is_root_comment == FALSE)] <- prednotroot
+
+write.csv(data.frame(preds), 'model_output/regressions/pred_pinned_lr.csv')
+
+```
+
+## Up/downvotes
+
+### Upvote model selection
+
+```{r}
+nt <- 16
+
+# save results
+votes_pos_results <- list()
+n <- 1
+for (f in list(vpf1, vpf2, vpf3, vpf4)){
+  # negative binomial regression
+  print(f)
+
+  model_nb <- glmmTMB(f, data = data_scaled, family = nbinom2,
+                      control = glmmTMBControl(parallel = nt, optimizer=optim,
+                                optArgs=list(method="BFGS")))
+
+  # save model
+  votes_pos_results[[n]] <- model_nb
+  print(summary(model_nb))
+  
+  # evaluate model performance with RMSLE
+  pred <- predict(model_nb, data_scaled, type = 'response')
+  rmsle <- rmsle(data_scaled$votes_pos, pred)
+  print(paste('RMSLE:', rmsle))
+  
+  n <- n+1
+}
+```
+
+### Save results
+
+```{r}
+# Combine coefficients into a single table, fill empty with NA
+
+vpdf <- data.frame()
+vpdfs <- data.frame()
+
+for (name in names(summary(votes_pos_results[[4]])$coefficients$cond[,1])){
+  
+  if (name %in% names(summary(votes_pos_results[[1]])$coefficients$cond[,1])){
+    pf1 <- summary(votes_pos_results[[1]])$coefficients$cond[name,1]
+    sf1 <- summary(votes_pos_results[[1]])$coefficients$cond[name,4]
+  }
+  else{
+    pf1 = NA
+    sf1 <- NA
+  }
+  
+  if (name %in% names(summary(votes_pos_results[[2]])$coefficients$cond[,1])){
+    pf2 <- summary(votes_pos_results[[2]])$coefficients$cond[name,1]
+    sf2 <- summary(votes_pos_results[[2]])$coefficients$cond[name,4]
+    }
+  else{
+    pf2 <- NA
+    sf2 <- NA
+  }
+
+  if (name %in% names(summary(votes_pos_results[[3]])$coefficients$cond[,1])){
+    pf3 <- summary(votes_pos_results[[3]])$coefficients$cond[name,1]
+    sf3 <- summary(votes_pos_results[[3]])$coefficients$cond[name,4]
+    }
+  else{
+    pf3 <- NA
+    sf3 <- NA
+  }
+   
+  vpdf <- rbind(vpdf, data.frame(name = name,
+                             pf1 = pf1,
+                             pf2 = pf2,
+                             pf3 = pf3,
+                             pf4 = summary(votes_pos_results[[4]])$coefficients$cond[name,1]))
+  vpdfs <- rbind(vpdfs, data.frame(name = name,
+                             sf1 = sf1,
+                             sf2 = sf2,
+                             sf3 = sf3,
+                             sf4 = summary(votes_pos_results[[4]])$coefficients$cond[name,4]))
+  
+}
+
+print(vpdf)
+print(vpdfs)
+
+# save results to csv
+write.csv(vpdf, 'model_output/regressions/votes_pos_coefs.csv')
+write.csv(vpdfs, 'model_output/regressions/votes_pos_pvalues.csv')
+
+```
+
+```{r}
+# save results
+saveRDS(votes_pos_results, file = "model_output/regressions/votes_pos_results.rds")
+```
+
+### Get final model predictions
+
+```{r}
+# get predicted votes for last model and write to csv
+votes_pos_results <- readRDS("model_output/regressions/votes_pos_results.rds")
+pred <- predict(votes_pos_results[[4]], data_scaled, type = 'response')
+write.csv(data.frame(pred), 'model_output/regressions/pred_votes_pos_nbr.csv')
+```
+
+### Downvote model selection
+
+```{r}
+# save results
+votes_neg_results <- list()
+n <- 1
+nt <- 16
+for (f in list(vnf1, vnf2, vnf3, vnf4)){
+  # negative binomial regression
+  print(f)
+  model_nb <- glmmTMB(f, data = data_scaled, family = nbinom2,
+                      control = glmmTMBControl(parallel = nt, optimizer=optim,
+                                optArgs=list(method="BFGS")))
+
+  votes_neg_results[[n]] <- model_nb
+  print(summary(model_nb))
+    # evaluate model performance with RMSLE
+  pred <- predict(model_nb, data_scaled, type = 'response')
+  rmsle <- rmsle(data_scaled$votes_neg, pred)
+  print(paste('RMSLE:', rmsle))
+  
+  n <- n+1
+}
+
+# Main votes:
+# Pre vars + genre
+# Pre vars + genre + pinned
+# Pre vars + genre + pinned + engagement (?)
+# Pre vars + genre + pinned + engagement + votes
+
+```
+
+### Save results
+```{r}
+# Combine coefficients into a single table, fill empty with NA
+
+vndf <- data.frame()
+vndfs <- data.frame()
+
+for (name in names(summary(votes_neg_results[[4]])$coefficients$cond[,1])){
+  
+  if (name %in% names(summary(votes_neg_results[[1]])$coefficients$cond[,1])){
+    pf1 <- summary(votes_neg_results[[1]])$coefficients$cond[name,1]
+    sf1 <- summary(votes_neg_results[[1]])$coefficients$cond[name,4]
+  }
+  else{
+    pf1 = NA
+    sf1 <- NA
+  }
+  
+  if (name %in% names(summary(votes_neg_results[[2]])$coefficients$cond[,1])){
+    pf2 <- summary(votes_neg_results[[2]])$coefficients$cond[name,1]
+    sf2 <- summary(votes_neg_results[[2]])$coefficients$cond[name,4]
+    }
+  else{
+    pf2 <- NA
+    sf2 <- NA
+  }
+
+  if (name %in% names(summary(votes_neg_results[[3]])$coefficients$cond[,1])){
+    pf3 <- summary(votes_neg_results[[3]])$coefficients$cond[name,1]
+    sf3 <- summary(votes_neg_results[[3]])$coefficients$cond[name,4]
+    }
+  else{
+    pf3 <- NA
+    sf3 <- NA
+  }
+   
+  vndf <- rbind(vndf, data.frame(name = name,
+                             pf1 = pf1,
+                             pf2 = pf2,
+                             pf3 = pf3,
+                             pf4 = summary(votes_neg_results[[4]])$coefficients$cond[name,1]))
+  vndfs <- rbind(vndfs, data.frame(name = name,
+                             sf1 = sf1,
+                             sf2 = sf2,
+                             sf3 = sf3,
+                             sf4 = summary(votes_neg_results[[4]])$coefficients$cond[name,4]))
+  
+}
+
+print(vndf)
+print(vndfs)
+
+
+# save results to csv
+write.csv(vndf, 'model_output/regressions/votes_neg_coefs.csv')
+write.csv(vndfs, 'model_output/regressions/votes_neg_pvalues.csv')
+
+```
+
+```{r}
+# save results
+saveRDS(votes_neg_results, file = "model_output/regressions/votes_neg_results.rds")
+```
+
+## Vote AIC and BIC
+
+```{r}
+votes_pos_results <- readRDS("model_output/regressions/votes_pos_results.rds")
+votes_neg_results <- readRDS("model_output/regressions/votes_neg_results.rds")
+
+```
+
+```{r}
+for(model_nb in votes_pos_results){
+# evaluate model precision, recall, accuracy, f1
+  pred <- predict(model_nb, data_scaled, type = 'response')
+  rmsle <- rmsle(data_scaled$votes_pos, pred)
+  print(paste('RMSLE:', rmsle))
+}
+```
+
+```{r}
+for(model_nb in votes_neg_results){
+# evaluate model precision, recall, accuracy, f1
+  pred <- predict(model_nb, data_scaled, type = 'response')
+  rmsle <- rmsle(data_scaled$votes_neg, pred)
+  print(paste('RMSLE:', rmsle))
+}
+```
+
+```{r}
+library(ggplot2)
+# plot AIC of models 1-6 from votes_pos_results, votes_neg_results
+
+votes_pos_aic <- c()
+votes_neg_aic <- c()
+votes_pos_bic <- c()
+votes_neg_bic <- c()
+
+for (i in 1:4){
+  votes_pos_aic[i] <- AIC(votes_pos_results[[i]])
+  votes_neg_aic[i] <- AIC(votes_neg_results[[i]])
+  votes_pos_bic[i] <- BIC(votes_pos_results[[i]])
+  votes_neg_bic[i] <- BIC(votes_neg_results[[i]])
+}
+
+# plot with ggplot
+
+votes_pos_aic <- data.frame(Model = 1:4, AIC = votes_pos_aic, type = 'votes_pos')
+votes_neg_aic <- data.frame(Model = 1:4, AIC = votes_neg_aic, type = 'votes_neg')
+votes_pos_bic <- data.frame(Model = 1:4, BIC = votes_pos_bic, type = 'votes_pos')
+votes_neg_bic <- data.frame(Model = 1:4, BIC = votes_neg_bic, type = 'votes_neg')
+
+aic <- rbind(votes_pos_aic, votes_neg_aic)
+ggplot(aic, aes(x = Model, y = AIC, color = type)) + geom_bar(stat = 'identity', position = 'dodge')
+
+write.csv(aic, "model_output/regressions/votes_aic.csv")
+
+bic <- rbind(votes_pos_bic, votes_neg_bic)
+ggplot(bic, aes(x = Model, y = BIC, color = type)) + geom_bar(stat = 'identity', position = 'dodge')
+
+write.csv(bic, "model_output/regressions/votes_bic.csv")
+
+```
+
+## Get coefficient differences
+
+```{r}
+
+# Load necessary libraries
+library(glmmTMB)
+library(broom.mixed)
+library(dplyr)
+pin_results <- readRDS("model_output/regressions/pin_results.rds")
+votes_pos_results <- readRDS("model_output/regressions/votes_pos_results.rds")
+votes_neg_results <- readRDS("model_output/regressions/votes_neg_results.rds")
+```
+
+```{r}
+pin_model1 <- tidy(pin_results[[1]], effects = "fixed")[,c(3,4,5,6,7)]
+pin_model1
+
+votes_pos_model1 <- tidy(votes_pos_results[[1]], effects = "fixed")[,c(3,4,5,6,7)]
+votes_pos_model1
+
+votes_neg_model1 <- tidy(votes_neg_results[[1]], effects = "fixed")[,c(3,4,5,6,7)]
+votes_neg_model1
+
+write.csv(pin_model1, "model_output/regressions/pin_model1.csv")
+write.csv(votes_pos_model1, "model_output/regressions/votes_pos_model1.csv")
+write.csv(votes_neg_model1, "model_output/regressions/votes_neg_model1.csv")
+```
+
+
+```{r}
+# Define the function
+compare_models <- function(model1, model2) {
+  # Extract coefficients and standard errors from both models using broom.mixed::tidy
+  coef_model1 <- tidy(model1, effects = "fixed")
+  coef_model2 <- tidy(model2, effects = "fixed")
+  
+  # Identify common variables
+  common_vars <- intersect(coef_model1$term, coef_model2$term)
+  
+  # Filter coefficients to include only the common variables
+  coef_model1_common <- coef_model1 %>% filter(term %in% common_vars)
+  coef_model2_common <- coef_model2 %>% filter(term %in% common_vars)
+  
+  # Calculate the differences in coefficients and their confidence intervals
+  coef_diff <- coef_model1_common %>%
+    rename(coef_model1 = estimate, se_model1 = std.error) %>%
+    inner_join(coef_model2_common %>% 
+                 rename(coef_model2 = estimate, se_model2 = std.error), by = "term") %>%
+    mutate(coef_diff = coef_model1 - coef_model2,
+           se_diff = sqrt(se_model1^2 + se_model2^2),
+           z_value = coef_diff / se_diff,
+           p_value = 2 * (1 - pnorm(abs(z_value))),
+           ci_lower_95 = coef_diff - 1.96 * se_diff,
+           ci_upper_95 = coef_diff + 1.96 * se_diff,
+           ci_lower_99 = coef_diff - 2.576 * se_diff,
+           ci_upper_99 = coef_diff + 2.576 * se_diff)
+  
+  # Select relevant columns for the results dataframe
+  results <- coef_diff %>%
+    select(term, coef_model1, coef_model2, coef_diff, se_diff, z_value, p_value, ci_lower_95, ci_upper_95, ci_lower_99, ci_upper_99)
+  
+  # Print and return the results
+  print(results)
+  return(results)
+}
+
+r1 <- compare_models(votes_pos_results[[1]], votes_neg_results[[1]])
+r2 <- compare_models(votes_pos_results[[2]], votes_neg_results[[2]])
+r3 <- compare_models(pin_results[[1]], votes_pos_results[[1]])
+r4 <- compare_models(pin_results[[1]], votes_neg_results[[1]])
+
+# save to csv
+write.csv(r1, 'model_output/regressions/votes_pos_neg_diffs_1.csv')
+write.csv(r2, 'model_output/regressions/votes_pos_neg_diffs_2.csv')
+write.csv(r3, 'model_output/regressions/pin_votes_pos_diffs.csv')
+write.csv(r4, 'model_output/regressions/pin_votes_neg_diffs.csv')
+```
+
+```{r}
+r1 <- compare_models(votes_pos_results[[1]], votes_neg_results[[1]])
+r1a <- r1[,c(1,4,5)] %>% rename(coef_model2 = coef_diff, se_model2 = se_diff)
+r1a
+
+pinterms <- tidy(pin_results[[1]], effects = "fixed")[, c(3,4,5) ] %>% rename(coef_model1 = estimate, se_model1 = std.error)
+pinterms
+
+coef_diff <- pinterms %>%
+  inner_join(r1a, by = "term") %>% 
+  mutate(coef_diff = coef_model1 - coef_model2,
+         se_diff = sqrt(se_model1^2 + se_model2^2),
+         z_value = coef_diff / se_diff,
+         p_value = 2 * (1 - pnorm(abs(z_value))),
+         ci_lower_95 = coef_diff - 1.96 * se_diff,
+         ci_upper_95 = coef_diff + 1.96 * se_diff,
+         ci_lower_99 = coef_diff - 2.576 * se_diff,
+         ci_upper_99 = coef_diff + 2.576 * se_diff)
+
+r5 <- coef_diff %>%
+    select(term, coef_model1, coef_model2, coef_diff, se_diff, z_value, p_value, ci_lower_95, ci_upper_95, ci_lower_99, ci_upper_99)
+write.csv(r5, 'model_output/regressions/pin_votes_compound_diffs.csv')
+
+
+```
+
