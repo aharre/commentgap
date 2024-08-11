@@ -1,15 +1,7 @@
-# Capstone Project
-
-## Measuring the comment gap: A machine learning and quantitative text analysis approach to studying news media user comments
-
-
-Candidate number: 43231
+# The News Comment Gap and Algorithmic Agenda Setting in Online Forums
 
 * 01_Code: used for scraping derstandard.at with RSelenium
-* 02_Code: 1) Python file for Random Forest models and negative binomial regression due to better GPU
-* 02_Code: 2) R file for feature selection and logistic regression model
-* 03_Code: used for analysing sorting policies
+* 02_Code: used for data cleaning, and analysis of comment preferences for readers/journalists
+* 03_Code: used for analysing ranking algorithms
 * 04_Code: used for beta regression model for FORUM score
 * 05_Code: used for creating figures and tables for the article
-
-
