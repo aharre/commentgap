@@ -1,1 +1,4 @@
 model_output/xgbs/pred_votes_neg_xgb.csv filter=lfs diff=lfs merge=lfs -text
+model_output/xgbs/pred_votes_pos_xgb.csv filter=lfs diff=lfs merge=lfs -text
+model_output/xgbs/pred_pinned_xgb.csv filter=lfs diff=lfs merge=lfs -text
+model_output/beta_results_list.rds filter=lfs diff=lfs merge=lfs -text
