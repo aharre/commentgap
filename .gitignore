@@ -16,5 +16,5 @@ model_output/regressions/votes_pos_results.rds
 model_output/regressions/pin_results.rds
 model_output/xgbs/pred_pinned_xgb.csv
 model_output/beta_results_list.rds
-model_output/xgbs/pred_votes_neg_xgb.csv
+# model_output/xgbs/pred_votes_neg_xgb.csv
 model_output/xgbs/pred_votes_pos_xgb.csv
