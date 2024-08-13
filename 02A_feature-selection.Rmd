@@ -332,15 +332,10 @@ hist(comment_data_general$sentiment_class_c)
 # probs
 sentiment_probs <- read.csv("data/output_probs.csv")
 head(sentiment_probs)
-colnames(sentiment_probs) <- c("positive", "negative", "neutral")
 
-sentiment_probs$positive_f <- as.numeric(substring(sentiment_probs$positive, 14, nchar(sentiment_probs$positive) -1))
-sentiment_probs$negative_f <- as.numeric(substring(sentiment_probs$negative, 14, nchar(sentiment_probs$negative) -1))
-sentiment_probs$neutral_f <- as.numeric(substring(sentiment_probs$neutral, 13, nchar(sentiment_probs$neutral) -1))
-
-comment_data_general$sentiment_prob_pos <- sentiment_probs$positive_f
-comment_data_general$sentiment_prob_neg <- sentiment_probs$negative_f
-comment_data_general$sentiment_prob_neu <- sentiment_probs$neutral_f
+comment_data_general$sentiment_prob_pos <- sentiment_probs$positive
+comment_data_general$sentiment_prob_neg <- sentiment_probs$negative
+comment_data_general$sentiment_prob_neu <- sentiment_probs$neutral
 
 # safety copy
 # write.csv(comment_data_general, "data/comment_data_general_091022_untilarticle5874_final.csv")
